@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MegaCart - Fake Store</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-wrap">
+        <h1>MegaCart</h1>
+        <p>Fake items. Free money.</p>
+      </div>
+      <label class="search-wrap" for="searchInput">
+        <input id="searchInput" type="search" placeholder="Search fake products..." />
+      </label>
+      <div class="topbar-actions">
+        <button id="cartToggle" class="cart-btn" type="button">Cart (<span id="cartCount">0</span>)</button>
+        <p id="accountLabel" class="account-label">Not signed in</p>
+        <button id="logoutBtn" class="link-btn hidden" type="button">Log out</button>
+      </div>
+    </header>
+
+    <section class="tabs">
+      <button id="storeTabBtn" class="tab-btn active" type="button">Store</button>
+      <button id="creditsTabBtn" class="tab-btn" type="button">Add Funds</button>
+      <button id="collectionTabBtn" class="tab-btn" type="button">Collection</button>
+      <button id="trackingTabBtn" class="tab-btn" type="button">Track Packages</button>
+      <button id="statsTabBtn" class="tab-btn" type="button">Stats</button>
+    </section>
+    <p id="syncStatusMsg" class="sync-status-msg" aria-live="polite"></p>
+
+    <section id="storeView">
+      <section id="storefrontContent">
+      <main class="layout">
+        <aside class="sidebar panel">
+          <section>
+            <h2>Wallet</h2>
+            <p class="money-label">Balance</p>
+            <p id="walletBalance" class="money-value">$0.00</p>
+            <div class="wallet-actions">
+              <button id="openCreditsBtn" type="button">add funds</button>
+            </div>
+            <p class="hint">Start at $0, then use the Add Funds tab.</p>
+          </section>
+
+          <section>
+            <h2>Filters</h2>
+            <label for="categoryFilter">Category</label>
+            <select id="categoryFilter">
+              <option value="all">All</option>
+            </select>
+
+            <label for="sortFilter">Sort</label>
+            <select id="sortFilter">
+              <option value="featured">Featured</option>
+              <option value="price-low">Price: Low to High</option>
+              <option value="price-high">Price: High to Low</option>
+              <option value="rating">Top Rated</option>
+            </select>
+          </section>
+
+          <section>
+            <h2>Checkout</h2>
+            <p><strong>Items:</strong> <span id="summaryItems">0</span></p>
+            <p><strong>Total:</strong> <span id="summaryTotal">$0.00</span></p>
+            <button id="checkoutBtn" type="button">Buy</button>
+            <p id="checkoutMsg" class="success-msg" aria-live="polite"></p>
+          </section>
+        </aside>
+
+        <section>
+          <div id="productGrid" class="product-grid"></div>
+        </section>
+
+        <aside id="cartPanel" class="cart panel hidden">
+          <div class="cart-head">
+            <h2>Your Cart</h2>
+            <button id="clearCartBtn" class="link-btn" type="button">Clear</button>
+          </div>
+          <div id="cartItems" class="cart-items"></div>
+        </aside>
+      </main>
+
+      <section class="orders panel">
+        <div class="orders-head">
+          <h2>Recent Orders</h2>
+          <p>Demo only, no real purchases.</p>
+        </div>
+        <div id="ordersList" class="orders-list"></div>
+      </section>
+      </section>
+
+      <section id="listingPreview" class="panel hidden">
+        <button id="closePreviewBtn" type="button" class="link-btn">Back to Store</button>
+        <div class="preview-grid">
+          <img id="previewImage" alt="Listing image" class="preview-image" />
+          <div class="preview-info">
+            <h2 id="previewTitle"></h2>
+            <p id="previewMeta" class="hint"></p>
+            <p id="previewPrice" class="money-value"></p>
+            <p id="previewDescription"></p>
+            <button id="previewAddToCartBtn" type="button">Add To Cart</button>
+          </div>
+        </div>
+
+        <section class="preview-reviews">
+          <h3>Reviews</h3>
+          <div id="previewReviewsList" class="reviews-list"></div>
+          <form id="previewReviewForm" class="review-form">
+            <label>
+              Rating
+              <select name="rating" required>
+                <option value="5">5</option>
+                <option value="4">4</option>
+                <option value="3">3</option>
+                <option value="2">2</option>
+                <option value="1">1</option>
+              </select>
+            </label>
+            <label>
+              Review
+              <textarea name="text" maxlength="240" required></textarea>
+            </label>
+            <button type="submit">Post Review</button>
+          </form>
+          <p id="previewReviewMsg" class="success-msg" aria-live="polite"></p>
+        </section>
+      </section>
+    </section>
+
+    <section id="creditsView" class="panel hidden">
+      <header class="credits-head">
+        <h2>Add Funds</h2>
+        <p>Run a timer and collect free funds.</p>
+      </header>
+      <p id="creditsUserLabel" class="hint"></p>
+      <p class="money-label">Current Balance</p>
+      <p id="creditsBalance" class="money-value">$0.00</p>
+      <section class="fund-timer">
+        <p id="fundTimerStatus" class="hint">Start a 2:30 timer for a random payout.</p>
+        <p id="fundTimerCountdown" class="money-value">Random • 02:30</p>
+        <button id="fundTimerBtn" type="button">Start 02:30 Timer</button>
+      </section>
+      <section class="id-shop">
+        <p class="hint">ID Shop</p>
+        <p id="idStatus" class="money-label">No 21+ ID owned.</p>
+        <button id="buyIdBtn" type="button">Buy 21+ ID ($75.00)</button>
+      </section>
+      <p id="creditsMsg" class="success-msg" aria-live="polite"></p>
+
+      <section id="adminPanel" class="admin-panel hidden">
+        <header class="admin-head">
+          <h3>Admin Controls (@ronin only)</h3>
+          <p>Add items, set prices, and delete listings.</p>
+        </header>
+
+        <form id="adminAddForm" class="admin-form">
+          <label class="checkbox-row age-toggle">
+            <input name="ageRestricted" type="checkbox" />
+            <span>
+              <strong>Mark listing as 21+</strong>
+              <small>Buyers must own a 21+ ID to purchase this item.</small>
+            </span>
+          </label>
+          <label>
+            Title
+            <input name="title" type="text" maxlength="120" required />
+          </label>
+          <label>
+            Category
+            <input name="category" type="text" maxlength="40" required />
+          </label>
+          <label>
+            Description
+            <textarea name="description" maxlength="500" rows="3"></textarea>
+          </label>
+          <label>
+            Rarity
+            <select name="rarity" required>
+              <option value="common">Common</option>
+              <option value="uncommon">Uncommon</option>
+              <option value="rare">Rare</option>
+              <option value="epic">Epic</option>
+              <option value="legendary">Legendary</option>
+              <option value="mythic">Mythic</option>
+            </select>
+          </label>
+          <label>
+            Price
+            <input name="price" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>
+            Stock
+            <input name="stock" type="number" min="0" step="1" />
+          </label>
+          <label>
+            Shipping Time
+            <input name="shippingTime" type="text" maxlength="50" placeholder="e.g. 2-4 business days" />
+          </label>
+          <label>
+            Rating (optional 1-5)
+            <input name="rating" type="number" min="1" max="5" step="0.1" />
+          </label>
+          <label>
+            Image from device (optional)
+            <input name="imageFile" type="file" accept="image/*" />
+          </label>
+          <button id="adminAddBtn" type="submit">Add Listing</button>
+        </form>
+
+        <div id="adminListings" class="admin-listings"></div>
+        <p id="adminMsg" class="success-msg" aria-live="polite"></p>
+      </section>
+    </section>
+
+    <section id="collectionView" class="panel hidden">
+      <header class="credits-head">
+        <h2>My Collection</h2>
+        <p>Items appear here after they are delivered.</p>
+      </header>
+      <div id="collectionGrid" class="collection-grid"></div>
+    </section>
+
+    <section id="trackingView" class="panel hidden">
+      <header class="credits-head">
+        <h2>Package Tracking</h2>
+        <p>Live shipping status for your recent orders.</p>
+      </header>
+      <div id="trackingList" class="tracking-list"></div>
+    </section>
+
+    <section id="statsView" class="panel hidden">
+      <header class="credits-head">
+        <h2>Stats</h2>
+        <p>Your account totals.</p>
+      </header>
+      <div class="stats-grid">
+        <article class="stats-card">
+          <p class="hint">Total Money Earned</p>
+          <p id="statsEarned" class="money-value">$0.00</p>
+        </article>
+        <article class="stats-card">
+          <p class="hint">Total Money Spent</p>
+          <p id="statsSpent" class="money-value">$0.00</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="deliveryPopup" class="delivery-popup hidden">
+      <img id="deliveryPopupImage" alt="Delivered item" class="delivery-popup-image" />
+      <p id="deliveryPopupText"></p>
+      <button id="deliveryPopupClose" type="button" class="link-btn">Close</button>
+    </section>
+
+    <section id="authModal" class="modal">
+      <div class="modal-card panel">
+        <h2>Sign In Required</h2>
+        <p>Use username and password. No email needed.</p>
+        <div class="auth-grid">
+          <form id="signupForm" class="stack">
+            <h3>Create Account</h3>
+            <label>
+              Username
+              <input name="username" type="text" maxlength="20" required />
+            </label>
+            <label>
+              Password
+              <input name="password" type="password" minlength="4" maxlength="40" required />
+            </label>
+            <button type="submit">Sign up</button>
+          </form>
+          <form id="loginForm" class="stack">
+            <h3>Log In</h3>
+            <label>
+              Username
+              <input name="username" type="text" maxlength="20" required />
+            </label>
+            <label>
+              Password
+              <input name="password" type="password" minlength="4" maxlength="40" required />
+            </label>
+            <button type="submit">Log in</button>
+          </form>
+        </div>
+        <p id="authMsg" class="success-msg error" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <script src="app.js?v=20260224d"></script>
+  </body>
+</html>

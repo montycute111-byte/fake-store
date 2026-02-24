@@ -1,0 +1,16 @@
+{
+  "name": "insta-clone-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @insta/api dev",
+    "dev:mobile": "pnpm --filter @insta/mobile dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "db:generate": "pnpm --filter @insta/api db:generate",
+    "db:migrate": "pnpm --filter @insta/api db:migrate",
+    "db:seed": "pnpm --filter @insta/api db:seed"
+  }
+}

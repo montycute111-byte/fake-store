@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MegaCart Credits Shop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="credits-body">
+    <main class="credits-page panel">
+      <header class="credits-head">
+        <h1>Credits Shop</h1>
+        <p>Free credit packs for demo purchases.</p>
+      </header>
+
+      <section>
+        <p id="creditsUserLabel" class="hint"></p>
+        <p class="money-label">Current Balance</p>
+        <p id="creditsBalance" class="money-value">0.00 Credits</p>
+      </section>
+
+      <section>
+        <h2>Choose Pack</h2>
+        <div class="credit-grid">
+          <button type="button" class="credit-option" data-amount="5">5c</button>
+          <button type="button" class="credit-option" data-amount="50">50c</button>
+          <button type="button" class="credit-option" data-amount="100">100c</button>
+          <button type="button" class="credit-option" data-amount="500">500c</button>
+          <button type="button" class="credit-option" data-amount="1000">1000c</button>
+        </div>
+      </section>
+
+      <p id="creditsMsg" class="success-msg" aria-live="polite"></p>
+      <a href="index.html" class="link-btn">Back to Store</a>
+    </main>
+
+    <script src="credits.js"></script>
+  </body>
+</html>

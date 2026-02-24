@@ -1,0 +1,15 @@
+node_modules
+.pnpm-store
+.env
+.env.*
+!.env.example
+coverage
+dist
+build
+.expo
+.expo-shared
+apps/mobile/.expo
+apps/mobile/.expo-shared
+apps/mobile/node_modules
+apps/api/node_modules
+*.log
