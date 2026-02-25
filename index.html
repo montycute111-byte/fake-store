@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260224e" />
+    <link rel="stylesheet" href="styles.css?v=20260225d" />
   </head>
   <body>
     <header class="topbar">
@@ -33,7 +33,10 @@
       <button id="creditsTabBtn" class="tab-btn" type="button">Add Funds</button>
       <button id="collectionTabBtn" class="tab-btn" type="button">Collection</button>
       <button id="trackingTabBtn" class="tab-btn" type="button">Track Packages</button>
+      <button id="jobsTabBtn" class="tab-btn" type="button">Daily Jobs</button>
       <button id="statsTabBtn" class="tab-btn" type="button">Stats</button>
+      <button id="friendsTabBtn" class="tab-btn" type="button">Friends</button>
+      <button id="tradesTabBtn" class="tab-btn" type="button">Trades</button>
     </section>
     <p id="syncStatusMsg" class="sync-status-msg" aria-live="polite"></p>
 
@@ -107,6 +110,7 @@
             <p id="previewMeta" class="hint"></p>
             <p id="previewPrice" class="money-value"></p>
             <p id="previewDescription"></p>
+            <ul id="previewFeatures" class="preview-features"></ul>
             <button id="previewAddToCartBtn" type="button">Add To Cart</button>
           </div>
         </div>
@@ -145,14 +149,12 @@
       <p class="money-label">Current Balance</p>
       <p id="creditsBalance" class="money-value">$0.00</p>
       <section class="fund-timer">
-        <p id="fundTimerStatus" class="hint">Start a 2:30 timer for a random payout.</p>
-        <p id="fundTimerCountdown" class="money-value">Random • 02:30</p>
-        <button id="fundTimerBtn" type="button">Start 02:30 Timer</button>
-      </section>
-      <section class="id-shop">
-        <p class="hint">ID Shop</p>
-        <p id="idStatus" class="money-label">No 21+ ID owned.</p>
-        <button id="buyIdBtn" type="button">Buy 21+ ID ($75.00)</button>
+        <p class="hint">5-Minute Reward</p>
+        <p id="reward5minStatus" class="hint">Sign in to claim.</p>
+        <p id="reward5minCountdown" class="money-value">Ready</p>
+        <button id="reward5minClaimBtn" type="button">Claim 5-Min Reward</button>
+        <p id="reward5minLast" class="hint">Last reward: $0.00</p>
+        <p id="reward5minToday" class="hint">Today's 5-min total: $0.00 / $1,200.00</p>
       </section>
       <p id="creditsMsg" class="success-msg" aria-live="polite"></p>
 
@@ -161,50 +163,28 @@
           <h3>Admin Controls (@ronin only)</h3>
           <p>Add items, set prices, and delete listings.</p>
         </header>
-
-        <form id="adminAddForm" class="admin-form">
-          <label class="checkbox-row age-toggle">
-            <input name="ageRestricted" type="checkbox" />
+        <section class="admin-catalog-tools">
+          <label class="checkbox-row">
+            <input id="adminAutoCatalogToggle" type="checkbox" />
             <span>
-              <strong>Mark listing as 21+</strong>
-              <small>Buyers must own a 21+ ID to purchase this item.</small>
+              <strong>Auto Catalog Generator</strong>
+              <small>Generate a fresh safe catalog each day.</small>
+            </span>
+          </label>
+          <label class="checkbox-row">
+            <input id="adminAiImagesToggle" type="checkbox" />
+            <span>
+              <strong>Generate AI Images</strong>
+              <small>Use server image generation for auto listings.</small>
             </span>
           </label>
           <label>
-            Title
-            <input name="title" type="text" maxlength="120" required />
+            AI images per day
+            <input id="adminAiImageDailyLimitInput" type="number" min="0" max="80" step="1" value="40" />
           </label>
-          <label>
-            Category
-            <input name="category" type="text" maxlength="40" required />
-          </label>
-          <label>
-            Description
-            <textarea name="description" maxlength="500" rows="3"></textarea>
-          </label>
-          <p class="hint">Rarity is random on delivery. You cannot set it manually.</p>
-          <label>
-            Price
-            <input name="price" type="number" min="0.01" step="0.01" required />
-          </label>
-          <label>
-            Stock
-            <input name="stock" type="number" min="0" step="1" />
-          </label>
-          <label>
-            Shipping Time
-            <input name="shippingTime" type="text" maxlength="50" placeholder="e.g. 2-4 business days" />
-          </label>
-          <label>
-            Rating (optional 1-5)
-            <input name="rating" type="number" min="1" max="5" step="0.1" />
-          </label>
-          <label>
-            Image from device (optional)
-            <input name="imageFile" type="file" accept="image/*" />
-          </label>
-          <button id="adminAddBtn" type="submit">Add Listing</button>
-        </form>
+          <button id="adminGenerateTodayBtn" type="button">Generate Today Now</button>
+          <p id="adminAutoCatalogStatus" class="hint">Checking auto generation status...</p>
+        </section>
 
         <div id="adminListings" class="admin-listings"></div>
         <div id="adminOrders" class="admin-listings"></div>
@@ -228,6 +208,17 @@
       <div id="trackingList" class="tracking-list"></div>
     </section>
 
+    <section id="jobsView" class="panel hidden">
+      <header class="credits-head">
+        <h2>Daily Jobs</h2>
+        <p>Accept one job at a time, wait for completion, then claim payout.</p>
+      </header>
+      <article id="jobsActiveCard" class="jobs-active-card hidden"></article>
+      <p id="jobsMeta" class="hint"></p>
+      <p id="jobsMsg" class="success-msg" aria-live="polite"></p>
+      <div id="jobsList" class="jobs-list"></div>
+    </section>
+
     <section id="statsView" class="panel hidden">
       <header class="credits-head">
         <h2>Stats</h2>
@@ -242,6 +233,96 @@
           <p class="hint">Total Money Spent</p>
           <p id="statsSpent" class="money-value">$0.00</p>
         </article>
+      </div>
+    </section>
+
+    <section id="friendsView" class="panel hidden">
+      <header class="credits-head">
+        <h2>Friends</h2>
+        <p>Search users, manage requests, and connect.</p>
+      </header>
+      <div class="friends-subtabs">
+        <button id="friendsSearchTabBtn" class="tab-btn active" type="button">Search</button>
+        <button id="friendsRequestsTabBtn" class="tab-btn" type="button">Requests</button>
+        <button id="friendsListTabBtn" class="tab-btn" type="button">Friends List</button>
+        <button id="friendsBlockedTabBtn" class="tab-btn" type="button">Blocked</button>
+      </div>
+      <p id="friendsMsg" class="success-msg" aria-live="polite"></p>
+      <section id="friendsSearchPanel" class="panel">
+        <label>
+          Search by username
+          <input id="friendSearchInput" type="text" maxlength="20" placeholder="username" />
+        </label>
+        <button id="friendSearchBtn" type="button">Search</button>
+        <div id="friendSearchResults" class="admin-listings"></div>
+      </section>
+      <section id="friendsRequestsPanel" class="panel hidden">
+        <h3>Incoming</h3>
+        <div id="friendIncomingList" class="admin-listings"></div>
+        <h3>Outgoing</h3>
+        <div id="friendOutgoingList" class="admin-listings"></div>
+      </section>
+      <section id="friendsListPanel" class="panel hidden">
+        <div id="friendsList" class="admin-listings"></div>
+      </section>
+      <section id="friendsBlockedPanel" class="panel hidden">
+        <div id="friendsBlockedList" class="admin-listings"></div>
+      </section>
+    </section>
+
+    <section id="tradesView" class="panel hidden">
+      <header class="credits-head">
+        <h2>Trades</h2>
+        <p>Trade items and optional money with friends.</p>
+      </header>
+      <p id="tradesMsg" class="success-msg" aria-live="polite"></p>
+      <section class="panel">
+        <h3>New Trade</h3>
+        <label>
+          Friend
+          <select id="newTradeFriendSelect"></select>
+        </label>
+        <label>
+          Offer Money
+          <input id="newTradeMoneyInput" type="number" min="0" max="2000" step="1" value="0" />
+        </label>
+        <p class="hint">Select up to 20 items from your inventory.</p>
+        <div id="newTradeInventoryList" class="admin-listings"></div>
+        <button id="createTradeBtn" type="button">Propose Trade</button>
+      </section>
+      <section class="panel">
+        <h3>My Trades</h3>
+        <div id="tradeEditPanel" class="panel hidden">
+          <h4>Edit My Offer</h4>
+          <p id="tradeEditMeta" class="hint"></p>
+          <label>
+            My Money Offer
+            <input id="tradeEditMoneyInput" type="number" min="0" max="2000" step="1" value="0" />
+          </label>
+          <div id="tradeEditInventoryList" class="admin-listings"></div>
+          <button id="saveTradeOfferBtn" type="button">Save My Offer</button>
+        </div>
+        <div id="myTradesList" class="admin-listings"></div>
+      </section>
+    </section>
+
+    <section id="sendMoneyModal" class="modal hidden">
+      <div class="modal-card panel">
+        <h2>Send Money</h2>
+        <p id="sendMoneyTarget" class="hint"></p>
+        <label>
+          Amount (max 1000)
+          <input id="sendMoneyAmountInput" type="number" min="1" max="1000" step="1" />
+        </label>
+        <label>
+          Note (optional)
+          <input id="sendMoneyNoteInput" type="text" maxlength="80" />
+        </label>
+        <div class="wallet-actions">
+          <button id="sendMoneyConfirmBtn" type="button">Confirm Send</button>
+          <button id="sendMoneyCancelBtn" type="button" class="link-btn">Cancel</button>
+        </div>
+        <p id="sendMoneyMsg" class="success-msg" aria-live="polite"></p>
       </div>
     </section>
 
@@ -285,6 +366,6 @@
       </div>
     </section>
 
-    <script src="app.js?v=20260224m"></script>
-  </body>
+  <script src="app.js?v=20260225d"></script>
+</body>
 </html>

@@ -28,6 +28,7 @@ const DEMO_LISTING_TITLES = new Set([
 const SEED_PRODUCTS = [];
 
 const db = loadDb();
+ensureRoninAccount();
 enforceRoninPassword();
 purgeDemoListingsForAllAccountsOnce();
 let activeTab = "store";
@@ -1034,16 +1035,16 @@ function pickCatalogImageUrl(imageKey, dayKey, index, title) {
   const list = AUTO_CATALOG_IMAGE_FILES[key] || AUTO_CATALOG_IMAGE_FILES.tech;
   const seed = hashStringToInt(`${dayKey}|${index}|${title}`);
   const imageName = list[seed % list.length] || list[0];
-  return `public/images/catalog/${key}/${imageName}`;
+  return `/public/images/catalog/${key}/${imageName}`;
 }
 
 function fallbackImageForCategory(category) {
   const key = String(category || "tech").toLowerCase();
-  if (key.includes("home")) return "public/images/catalog/home/home-01.svg";
-  if (key.includes("beauty")) return "public/images/catalog/beauty/beauty-01.svg";
-  if (key.includes("fitness")) return "public/images/catalog/fitness/fitness-01.svg";
-  if (key.includes("gaming")) return "public/images/catalog/gaming/gaming-01.svg";
-  return "public/images/catalog/tech/tech-01.svg";
+  if (key.includes("home")) return "/public/images/catalog/home/home-01.svg";
+  if (key.includes("beauty")) return "/public/images/catalog/beauty/beauty-01.svg";
+  if (key.includes("fitness")) return "/public/images/catalog/fitness/fitness-01.svg";
+  if (key.includes("gaming")) return "/public/images/catalog/gaming/gaming-01.svg";
+  return "/public/images/catalog/tech/tech-01.svg";
 }
 
 function buildListingImageKey(listing, dayKey, versionSuffix = "") {
@@ -3862,7 +3863,12 @@ function handleStorageSync(event) {
 function mapFirestoreDocToListing(doc) {
   const data = doc.data() || {};
   const createdAtMs = data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now();
-  const image = normalizeRuntimeImageUrl(data.imageUrl || data.base64Image || fallbackImageForTitle(data.title || "item"));
+  const category = String(data.category || "General");
+  const rawImage = data.imageUrl || data.base64Image || fallbackImageForTitle(data.title || "item");
+  let image = normalizeRuntimeImageUrl(rawImage);
+  if (shouldForceFallbackImageUrl(image)) {
+    image = normalizeRuntimeImageUrl(fallbackImageForCategory(category));
+  }
   const rarity = normalizeRarity(data.rarity || "common");
   const features = Array.isArray(data.features)
     ? data.features.map((item) => String(item || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6)
@@ -3871,7 +3877,7 @@ function mapFirestoreDocToListing(doc) {
     id: doc.id,
     title: String(data.title || "Untitled Item"),
     brand: String(data.brand || "NovaGoods").trim().slice(0, 40) || "NovaGoods",
-    category: String(data.category || "General"),
+    category,
     price: round2(Math.max(0.01, Number(data.price) || 0.01)),
     rating: round2(clamp(Number(data.rating) || 4.2, 1, 5)),
     reviewCount: Math.max(0, Math.floor(Number(data.reviewCount) || 0)),
@@ -4335,6 +4341,19 @@ function enforceRoninPassword() {
   persistDb();
 }
 
+function ensureRoninAccount() {
+  if (!db || !Array.isArray(db.users)) return;
+  const exists = db.users.some((user) => user.username === "ronin");
+  if (exists) return;
+  db.users.push({
+    id: crypto.randomUUID(),
+    username: "ronin",
+    password: "ronin",
+    progress: defaultProgress()
+  });
+  persistDb();
+}
+
 function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefaults = true) {
   const source = Array.isArray(catalogRaw) && catalogRaw.length
     ? includeSeedDefaults
@@ -4748,7 +4767,7 @@ function fallbackImageForTitle(title) {
   const all = Object.values(AUTO_CATALOG_IMAGE_FILES).flat();
   const name = all[seed % all.length] || "tech-01.svg";
   const folder = name.split("-")[0] || "tech";
-  return `public/images/catalog/${folder}/${name}`;
+  return `/public/images/catalog/${folder}/${name}`;
 }
 
 function normalizeRuntimeImageUrl(src) {
@@ -4761,7 +4780,14 @@ function normalizeRuntimeImageUrl(src) {
     if (value.startsWith("/public/")) return `.${value}`;
     if (value.startsWith("/")) return `.${value}`;
   }
+  if (value.startsWith("public/")) return `/${value}`;
   return value;
+}
+
+function shouldForceFallbackImageUrl(imageUrl) {
+  const value = String(imageUrl || "");
+  if (!value) return true;
+  return value.startsWith("public/generated-products/") || value.startsWith("/public/generated-products/");
 }
 
 function attachImageFallback(imageEl, title) {
