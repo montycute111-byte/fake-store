@@ -33,12 +33,122 @@ let activeTab = "store";
 let activeListingId = null;
 let fundTimerIntervalId = null;
 let deliveryPopupQueue = [];
-const FUND_TIMER_DURATION_MS = 2.5 * 60 * 1000;
-const FUND_TIMER_LABEL = "02:30";
 const AGE_ID_PRICE = 75;
 const SELL_TAX_RATE = 0.05;
 const SELL_CAP = 50000;
 const MYTHIC_SELL_COOLDOWN_MS = 2 * 60 * 1000;
+const REWARD5_MIN_COOLDOWN_MS = 5 * 60 * 1000;
+const REWARD5_MIN_DAILY_CAP = 1200;
+const REWARD5_MIN_TIERS = [
+  { key: "common", min: 5, max: 15, weight: 55 },
+  { key: "uncommon", min: 16, max: 35, weight: 25 },
+  { key: "rare", min: 36, max: 70, weight: 12 },
+  { key: "epic", min: 71, max: 120, weight: 6 },
+  { key: "legendary", min: 121, max: 250, weight: 2 }
+];
+const JOB_DAILY_EARNINGS_CAP = 1000;
+const JOB_CLAIM_COOLDOWN_MS = 10 * 60 * 1000;
+const JOB_MIN_DURATION_MINUTES = 2;
+const JOB_MAX_DURATION_MINUTES = 30;
+const JOB_MIN_PAYOUT = 20;
+const JOB_MAX_PAYOUT = 400;
+const AUTO_CATALOG_MIN_ITEMS = 40;
+const AUTO_CATALOG_MAX_ITEMS = 80;
+const AUTO_CATALOG_LOCAL_CONFIG_KEY = "megacart_auto_catalog_config_v1";
+const AUTO_CATALOG_DEFAULT_ENABLED = true;
+const AUTO_CATALOG_RARITY_WEIGHTS = [
+  { key: "common", weight: 70 },
+  { key: "uncommon", weight: 20 },
+  { key: "rare", weight: 8 },
+  { key: "epic", weight: 1.8 },
+  { key: "legendary", weight: 0.2 }
+];
+const AUTO_CATALOG_RARITY_RULES = {
+  common: { priceMin: 10, priceMax: 60, stockMin: 30, stockMax: 200, ratingMin: 3.2, ratingMax: 4.4, reviewsMin: 800, reviewsMax: 5000 },
+  uncommon: { priceMin: 40, priceMax: 140, stockMin: 15, stockMax: 90, ratingMin: 3.6, ratingMax: 4.6, reviewsMin: 300, reviewsMax: 2200 },
+  rare: { priceMin: 120, priceMax: 300, stockMin: 5, stockMax: 30, ratingMin: 3.9, ratingMax: 4.8, reviewsMin: 80, reviewsMax: 900 },
+  epic: { priceMin: 250, priceMax: 600, stockMin: 2, stockMax: 10, ratingMin: 4.2, ratingMax: 4.9, reviewsMin: 20, reviewsMax: 240 },
+  legendary: { priceMin: 500, priceMax: 1200, stockMin: 1, stockMax: 3, ratingMin: 4.5, ratingMax: 5.0, reviewsMin: 5, reviewsMax: 80 }
+};
+const AUTO_CATALOG_MODEL_NAMES = ["X2", "Pro", "Lite", "Max", "S", "Ultra", "Prime", "Flex"];
+const AUTO_CATALOG_FAKE_BRAND_SYLLABLES = {
+  first: ["No", "Ae", "Kly", "Bri", "Van", "So", "Lu", "Ze", "Tri", "Mer", "Cal", "Ora", "Dri", "Nex", "Vel", "Ar"],
+  middle: ["va", "ro", "na", "ly", "mi", "to", "ra", "zi", "lo", "ne", "ta", "ri", "sa", "vo", "ke", "no"],
+  last: ["ra", "za", "na", "ro", "ta", "va", "la", "ry", "nix", "nest", "line", "core", "nova", "rise", "craft", "wave"]
+};
+const AUTO_CATALOG_CATEGORY_TEMPLATES = {
+  Tech: {
+    imageKey: "tech",
+    productTypes: ["Earbuds", "Mechanical Keyboard", "USB-C Charger", "Smart Light Kit", "Webcam", "Laptop Stand"],
+    descriptors: ["Wireless", "Low-Latency", "Compact", "Fast-Charge", "AI Focus", "Noise Shield", "Desk-Ready", "Portable"],
+    featurePool: ["Bluetooth 5.3", "USB-C power delivery", "Low-latency connection", "Foldable build", "Touch controls", "Quick-pair setup", "Cable included", "Multi-device support"],
+    descriptionPool: [
+      "Built for daily setup upgrades with reliable performance and quick setup.",
+      "Designed for smooth everyday use with clean controls and stable output."
+    ]
+  },
+  Home: {
+    imageKey: "home",
+    productTypes: ["Cozy Blanket", "Table Lamp", "Storage Bin Set", "Air Fryer", "Closet Organizer", "Kitchen Rack"],
+    descriptors: ["Space-Saving", "Soft-Touch", "Warm Glow", "Stackable", "Quiet", "Modern", "Easy-Clean", "Family Size"],
+    featurePool: ["Simple setup", "Wipe-clean finish", "Compact footprint", "Durable shell", "Low-noise operation", "Heat-safe materials", "Easy carry handles", "Fits small spaces"],
+    descriptionPool: [
+      "A practical home essential made for busy routines and clean spaces.",
+      "Built to improve daily comfort with a tidy look and simple controls."
+    ]
+  },
+  Beauty: {
+    imageKey: "beauty",
+    productTypes: ["Hydration Lotion", "Skincare Set", "Dryer Brush", "Nail Kit", "Face Roller", "Travel Vanity Kit"],
+    descriptors: ["Glow", "Hydra", "Smooth", "Soft Finish", "Salon", "Gentle", "Daily Care", "Quick Style"],
+    featurePool: ["Travel-ready case", "Gentle daily use", "Lightweight design", "Easy-grip handle", "Fast heat-up", "Soft-touch finish", "Simple cleaning", "Includes starter accessories"],
+    descriptionPool: [
+      "Made for simple daily routines with smooth results and easy handling.",
+      "A lightweight beauty pick that fits morning and evening routines."
+    ]
+  },
+  Fitness: {
+    imageKey: "fitness",
+    productTypes: ["Resistance Band Set", "Shaker Bottle", "Yoga Mat", "Massage Device", "Training Rope", "Core Slider Kit"],
+    descriptors: ["Power", "Flex", "Active", "Recovery", "Grip", "Studio", "Endurance", "Move"],
+    featurePool: ["Sweat-resistant finish", "Portable carry bag", "Grip-safe texture", "Quick-rinse cleaning", "Compact storage", "Workout guide card", "Stable support", "Daily training ready"],
+    descriptionPool: [
+      "Built for home or gym sessions with reliable grip and easy transport.",
+      "Helps keep workouts consistent with practical features and durable materials."
+    ]
+  },
+  Gaming: {
+    imageKey: "gaming",
+    productTypes: ["Controller Grip Kit", "Mouse Pad", "Headset Stand", "Desk RGB Strip", "Trigger Caps", "Cable Bungee"],
+    descriptors: ["Pro Play", "Arena", "Speed", "Precision", "Night Mode", "Ultra Glide", "Steady Aim", "Desk Sync"],
+    featurePool: ["Non-slip base", "Low-friction surface", "Cable management slot", "Desk-friendly size", "Quick install", "Stable frame", "Color mode presets", "Scratch-resistant coating"],
+    descriptionPool: [
+      "Designed to keep your setup clean, responsive, and ready for long sessions.",
+      "A setup upgrade focused on control, comfort, and stable play."
+    ]
+  }
+};
+const AUTO_CATALOG_IMAGE_FILES = {
+  tech: ["tech-01.svg", "tech-02.svg", "tech-03.svg", "tech-04.svg", "tech-05.svg", "tech-06.svg"],
+  home: ["home-01.svg", "home-02.svg", "home-03.svg", "home-04.svg", "home-05.svg", "home-06.svg"],
+  beauty: ["beauty-01.svg", "beauty-02.svg", "beauty-03.svg", "beauty-04.svg", "beauty-05.svg", "beauty-06.svg"],
+  fitness: ["fitness-01.svg", "fitness-02.svg", "fitness-03.svg", "fitness-04.svg", "fitness-05.svg", "fitness-06.svg"],
+  gaming: ["gaming-01.svg", "gaming-02.svg", "gaming-03.svg", "gaming-04.svg", "gaming-05.svg", "gaming-06.svg"]
+};
+const JOB_POOL = [
+  { title: "Stock Shelf Reset", description: "Re-organize incoming items and reset shelf labels." },
+  { title: "Package Scan Shift", description: "Scan outgoing packages and verify tracking IDs." },
+  { title: "Cart Recovery Calls", description: "Contact shoppers who abandoned carts and offer support." },
+  { title: "Returns Processing", description: "Inspect return requests and restock valid inventory." },
+  { title: "Warehouse Sweep", description: "Audit aisle locations and clean pick-paths for speed." },
+  { title: "Priority Packing", description: "Pack express orders with fragile-safe wrapping." },
+  { title: "Listing Quality Check", description: "Review listing details and image quality for trust." },
+  { title: "Support Desk Queue", description: "Answer customer messages and resolve delivery issues." },
+  { title: "Price Tag Update", description: "Apply dynamic price tags based on market trends." },
+  { title: "Night Cycle Inventory", description: "Count overnight stock and reconcile differences." },
+  { title: "Fraud Flag Review", description: "Inspect suspicious orders and clear valid transactions." },
+  { title: "Driver Dispatch Assist", description: "Assign routes and confirm pickup readiness." }
+];
 let firestoreDb = null;
 let firestoreUnsubscribeListings = null;
 let listingsRefreshIntervalId = null;
@@ -70,6 +180,7 @@ const ui = {
   creditsTabBtn: document.querySelector("#creditsTabBtn"),
   collectionTabBtn: document.querySelector("#collectionTabBtn"),
   trackingTabBtn: document.querySelector("#trackingTabBtn"),
+  jobsTabBtn: document.querySelector("#jobsTabBtn"),
   statsTabBtn: document.querySelector("#statsTabBtn"),
   storeView: document.querySelector("#storeView"),
   storefrontContent: document.querySelector("#storefrontContent"),
@@ -80,6 +191,7 @@ const ui = {
   previewMeta: document.querySelector("#previewMeta"),
   previewPrice: document.querySelector("#previewPrice"),
   previewDescription: document.querySelector("#previewDescription"),
+  previewFeatures: document.querySelector("#previewFeatures"),
   previewAddToCartBtn: document.querySelector("#previewAddToCartBtn"),
   previewReviewsList: document.querySelector("#previewReviewsList"),
   previewReviewForm: document.querySelector("#previewReviewForm"),
@@ -89,6 +201,11 @@ const ui = {
   collectionGrid: document.querySelector("#collectionGrid"),
   trackingView: document.querySelector("#trackingView"),
   trackingList: document.querySelector("#trackingList"),
+  jobsView: document.querySelector("#jobsView"),
+  jobsActiveCard: document.querySelector("#jobsActiveCard"),
+  jobsMeta: document.querySelector("#jobsMeta"),
+  jobsMsg: document.querySelector("#jobsMsg"),
+  jobsList: document.querySelector("#jobsList"),
   statsView: document.querySelector("#statsView"),
   syncStatusMsg: document.querySelector("#syncStatusMsg"),
   statsEarned: document.querySelector("#statsEarned"),
@@ -96,9 +213,11 @@ const ui = {
   creditsUserLabel: document.querySelector("#creditsUserLabel"),
   creditsBalance: document.querySelector("#creditsBalance"),
   creditsMsg: document.querySelector("#creditsMsg"),
-  fundTimerStatus: document.querySelector("#fundTimerStatus"),
-  fundTimerCountdown: document.querySelector("#fundTimerCountdown"),
-  fundTimerBtn: document.querySelector("#fundTimerBtn"),
+  reward5minStatus: document.querySelector("#reward5minStatus"),
+  reward5minCountdown: document.querySelector("#reward5minCountdown"),
+  reward5minClaimBtn: document.querySelector("#reward5minClaimBtn"),
+  reward5minLast: document.querySelector("#reward5minLast"),
+  reward5minToday: document.querySelector("#reward5minToday"),
   idStatus: document.querySelector("#idStatus"),
   buyIdBtn: document.querySelector("#buyIdBtn"),
   adminPanel: document.querySelector("#adminPanel"),
@@ -107,6 +226,9 @@ const ui = {
   adminListings: document.querySelector("#adminListings"),
   adminOrders: document.querySelector("#adminOrders"),
   adminMsg: document.querySelector("#adminMsg"),
+  adminAutoCatalogToggle: document.querySelector("#adminAutoCatalogToggle"),
+  adminGenerateTodayBtn: document.querySelector("#adminGenerateTodayBtn"),
+  adminAutoCatalogStatus: document.querySelector("#adminAutoCatalogStatus"),
   deliveryPopup: document.querySelector("#deliveryPopup"),
   deliveryPopupImage: document.querySelector("#deliveryPopupImage"),
   deliveryPopupText: document.querySelector("#deliveryPopupText"),
@@ -174,11 +296,14 @@ function bindEvents() {
   ui.trackingTabBtn.addEventListener("click", () => {
     switchTab("tracking");
   });
+  ui.jobsTabBtn.addEventListener("click", () => {
+    switchTab("jobs");
+  });
   ui.statsTabBtn.addEventListener("click", () => {
     switchTab("stats");
   });
 
-  ui.fundTimerBtn.addEventListener("click", handleFundTimerAction);
+  ui.reward5minClaimBtn.addEventListener("click", handleClaim5MinReward);
   ui.buyIdBtn.addEventListener("click", handleBuyAgeId);
 
   ui.closePreviewBtn.addEventListener("click", closeListingPreview);
@@ -189,6 +314,12 @@ function bindEvents() {
   });
   ui.previewReviewForm.addEventListener("submit", handlePreviewReviewSubmit);
   ui.adminAddForm.addEventListener("submit", handleAdminAdd);
+  if (ui.adminAutoCatalogToggle) {
+    ui.adminAutoCatalogToggle.addEventListener("change", handleAdminAutoCatalogToggle);
+  }
+  if (ui.adminGenerateTodayBtn) {
+    ui.adminGenerateTodayBtn.addEventListener("click", handleAdminGenerateTodayNow);
+  }
   ui.signupForm.addEventListener("submit", handleSignup);
   ui.loginForm.addEventListener("submit", handleLogin);
   ui.logoutBtn.addEventListener("click", handleLogout);
@@ -198,6 +329,8 @@ function bindEvents() {
   });
   ui.deliveryPopupClose.addEventListener("click", hideDeliveryPopup);
   ui.collectionGrid.addEventListener("click", handleCollectionAction);
+  ui.jobsList.addEventListener("click", handleJobsAction);
+  ui.jobsActiveCard.addEventListener("click", handleJobsAction);
   window.addEventListener("storage", handleStorageSync);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
@@ -210,11 +343,16 @@ function bindEvents() {
 }
 
 function switchTab(tab) {
-  if ((tab === "credits" || tab === "collection" || tab === "tracking" || tab === "stats") && !ensureSignedIn("Sign in first to continue.")) {
+  if ((tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats") && !ensureSignedIn("Sign in first to continue.")) {
     return;
   }
 
-  activeTab = tab === "credits" || tab === "collection" || tab === "tracking" || tab === "stats" ? tab : "store";
+  activeTab = tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats" ? tab : "store";
+  if (activeTab === "store") {
+    ensureAutoCatalogFresh().catch((error) => {
+      console.error("[AutoCatalog] store refresh failed:", error);
+    });
+  }
   if (activeTab !== "store") {
     closeListingPreview();
   }
@@ -222,6 +360,7 @@ function switchTab(tab) {
   renderCreditsShop();
   renderCollection();
   renderTracking();
+  renderDailyJobs();
   renderStats();
 }
 
@@ -230,17 +369,20 @@ function renderTabState() {
   const creditsActive = activeTab === "credits";
   const collectionActive = activeTab === "collection";
   const trackingActive = activeTab === "tracking";
+  const jobsActive = activeTab === "jobs";
   const statsActive = activeTab === "stats";
 
   ui.storeView.classList.toggle("hidden", !storeActive);
   ui.creditsView.classList.toggle("hidden", !creditsActive);
   ui.collectionView.classList.toggle("hidden", !collectionActive);
   ui.trackingView.classList.toggle("hidden", !trackingActive);
+  ui.jobsView.classList.toggle("hidden", !jobsActive);
   ui.statsView.classList.toggle("hidden", !statsActive);
   ui.storeTabBtn.classList.toggle("active", storeActive);
   ui.creditsTabBtn.classList.toggle("active", creditsActive);
   ui.collectionTabBtn.classList.toggle("active", collectionActive);
   ui.trackingTabBtn.classList.toggle("active", trackingActive);
+  ui.jobsTabBtn.classList.toggle("active", jobsActive);
   ui.statsTabBtn.classList.toggle("active", statsActive);
 }
 
@@ -271,6 +413,7 @@ function renderAll() {
   renderListingPreview();
   renderCollection();
   renderTracking();
+  renderDailyJobs();
   renderStats();
   checkForDeliveredItems();
 }
@@ -308,17 +451,41 @@ function renderWallet() {
   ui.walletBalance.textContent = money(balance);
 }
 
+function addMoney(amount, reason = "unknown", meta = {}) {
+  const progress = getProgressOrNull();
+  if (!progress) return 0;
+  const safeAmount = round2(Number(amount) || 0);
+  if (!Number.isFinite(safeAmount) || safeAmount <= 0) return 0;
+
+  progress.balance = round2((Number(progress.balance) || 0) + safeAmount);
+  progress.totalFundsCollected = round2((Number(progress.totalFundsCollected) || 0) + safeAmount);
+  if (!Array.isArray(progress.moneyLedger)) {
+    progress.moneyLedger = [];
+  }
+  progress.moneyLedger.unshift({
+    id: crypto.randomUUID(),
+    amount: safeAmount,
+    reason: String(reason || "unknown"),
+    createdAt: new Date().toISOString(),
+    meta: meta && typeof meta === "object" ? meta : {}
+  });
+  progress.moneyLedger = progress.moneyLedger.slice(0, 200);
+  return safeAmount;
+}
+
 function renderCreditsShop() {
   const user = getCurrentUser();
   if (!user) {
     ui.creditsUserLabel.textContent = "No active account.";
     ui.creditsBalance.textContent = "$0.00";
-    ui.fundTimerBtn.disabled = true;
+    ui.reward5minClaimBtn.disabled = true;
+    ui.reward5minStatus.textContent = "Sign in to claim.";
+    ui.reward5minCountdown.textContent = "Ready";
+    ui.reward5minLast.textContent = "Last reward: $0.00";
+    ui.reward5minToday.textContent = `Today's 5-min total: $0.00 / ${money(REWARD5_MIN_DAILY_CAP)}`;
     ui.buyIdBtn.disabled = true;
     ui.buyIdBtn.textContent = `Buy 21+ ID (${money(AGE_ID_PRICE)})`;
     ui.idStatus.textContent = "Sign in to buy a 21+ ID.";
-    ui.fundTimerStatus.textContent = "Sign in to use the timer.";
-    ui.fundTimerCountdown.textContent = `Random • ${FUND_TIMER_LABEL}`;
     ui.adminPanel.classList.add("hidden");
     ui.adminListings.innerHTML = "";
     return;
@@ -327,10 +494,11 @@ function renderCreditsShop() {
   ui.creditsUserLabel.textContent = `Signed in as @${user.username}`;
   ui.creditsBalance.textContent = money(Number(user.progress.balance) || 0);
   renderAgeIdShop(user.progress);
-  renderFundTimer(user.progress);
+  renderFiveMinuteReward(user.progress);
 
   if (isAdminUser(user)) {
     ui.adminPanel.classList.remove("hidden");
+    renderAdminAutoCatalogControls();
     renderAdminListings();
     renderAdminOrders().catch((error) => {
       console.error("[Firestore] admin orders render failed:", error);
@@ -355,32 +523,6 @@ function renderAgeIdShop(progress) {
   ui.buyIdBtn.disabled = hasId;
 }
 
-function renderFundTimer(progress) {
-  const endsAt = Number(progress.fundTimerEndsAt || 0);
-  const now = Date.now();
-  ui.fundTimerBtn.disabled = false;
-
-  if (!endsAt) {
-    ui.fundTimerStatus.textContent = "Start a 2:30 timer for a random payout.";
-    ui.fundTimerCountdown.textContent = `Random • ${FUND_TIMER_LABEL}`;
-    ui.fundTimerBtn.textContent = `Start ${FUND_TIMER_LABEL} Timer`;
-    return;
-  }
-
-  if (now < endsAt) {
-    const remaining = formatCountdown(endsAt - now);
-    ui.fundTimerStatus.textContent = "Timer running...";
-    ui.fundTimerCountdown.textContent = `Random • ${remaining}`;
-    ui.fundTimerBtn.textContent = "Timer Running";
-    ui.fundTimerBtn.disabled = true;
-    return;
-  }
-
-  ui.fundTimerStatus.textContent = "Timer finished. Collect your random payout.";
-  ui.fundTimerCountdown.textContent = "Random • Ready";
-  ui.fundTimerBtn.textContent = "Collect Reward";
-}
-
 function startFundTimerTicker() {
   if (fundTimerIntervalId) {
     clearInterval(fundTimerIntervalId);
@@ -390,7 +532,7 @@ function startFundTimerTicker() {
     const progress = getProgressOrNull();
     if (!progress) return;
     if (activeTab === "credits") {
-      renderFundTimer(progress);
+      renderFiveMinuteReward(progress);
     }
     checkForDeliveredItems();
     if (activeTab === "collection") {
@@ -398,6 +540,9 @@ function startFundTimerTicker() {
     }
     if (activeTab === "tracking") {
       renderTracking();
+    }
+    if (activeTab === "jobs") {
+      renderDailyJobs();
     }
     if (activeTab === "stats") {
       renderStats();
@@ -421,7 +566,7 @@ function renderAdminListings() {
           <strong class="admin-title">${product.title}</strong>
           <span class="admin-price">${money(product.price)}</span>
         </div>
-        <p class="admin-meta">${product.category}${product.ageRestricted ? " • 21+" : ""} • ${stockLabel} • ${product.shippingTime || "Standard shipping"} • Rarity random on delivery • Rating ${effectiveRating.toFixed(1)} • @${product.ownerUsername}</p>
+        <p class="admin-meta">${product.brand || "NovaGoods"} • ${product.category}${product.ageRestricted ? " • 21+" : ""} • ${stockLabel} • ${product.shippingTime || "Standard shipping"} • ${formatRarityLabel(product.rarity)} • Rating ${effectiveRating.toFixed(1)} • @${product.ownerUsername}</p>
         <div class="admin-row-controls">
           <label class="admin-price-input">
             Price
@@ -432,6 +577,7 @@ function renderAdminListings() {
         </div>
       </div>
     `;
+    attachImageFallback(row.querySelector("img"), product.title);
 
     const input = row.querySelector("input");
     const priceBtn = row.querySelector('[data-action="price"]');
@@ -487,40 +633,283 @@ async function renderAdminOrders() {
   }
 }
 
-function handleFundTimerAction() {
-  const progress = getProgressOrNull();
-  if (!progress && !ensureSignedIn("Sign in first to add money.")) return;
-  const nextProgress = getProgressOrNull();
-  if (!nextProgress) return;
+async function renderAdminAutoCatalogControls() {
+  if (!ui.adminAutoCatalogToggle || !ui.adminGenerateTodayBtn || !ui.adminAutoCatalogStatus) return;
+  const config = await readAutoCatalogConfig();
+  const enabled = config.autoEnabled !== false;
+  ui.adminAutoCatalogToggle.checked = enabled;
+  ui.adminGenerateTodayBtn.disabled = !firestoreDb;
+  ui.adminAutoCatalogStatus.textContent = firestoreDb
+    ? `Auto generation is ${enabled ? "ON" : "OFF"}.`
+    : "Connect Firestore to use auto generation controls.";
+}
 
-  const now = Date.now();
-  const endsAt = Number(nextProgress.fundTimerEndsAt || 0);
+async function handleAdminAutoCatalogToggle(event) {
+  if (!ensureAdmin()) return;
+  try {
+    const enabled = event.currentTarget.checked === true;
+    await writeAutoCatalogConfig({ autoEnabled: enabled });
+    if (enabled) {
+      await ensureAutoCatalogFresh(true);
+    }
+    setAdminMessage(`Auto catalog generation ${enabled ? "enabled" : "disabled"}.`);
+    renderAdminAutoCatalogControls().catch((error) => {
+      console.error("[AutoCatalog] toggle render failed:", error);
+    });
+  } catch (error) {
+    console.error("[AutoCatalog] toggle failed:", error);
+    setAdminMessage(`Auto catalog toggle failed: ${error?.message || "Try again."}`, true);
+  }
+}
 
-  if (!endsAt) {
-    nextProgress.fundTimerEndsAt = now + FUND_TIMER_DURATION_MS;
-    persistDb();
-    setFundMessage(`Timer started. Come back in ${FUND_TIMER_LABEL}.`);
-    renderCreditsShop();
+async function handleAdminGenerateTodayNow() {
+  if (!ensureAdmin()) return;
+  if (!firestoreDb) {
+    setAdminMessage("Connect Firestore before generating.", true);
+    return;
+  }
+  try {
+    await ensureAutoCatalogFresh(true);
+    setAdminMessage("Generated today's auto catalog batch.");
+  } catch (error) {
+    console.error("[AutoCatalog] manual generate failed:", error);
+    setAdminMessage(`Generate failed: ${error?.message || "Try again."}`, true);
+  }
+}
+
+async function ensureAutoCatalogFresh(force = false) {
+  if (!firestoreDb) return;
+  const todayKey = getTodayKeyLocal();
+  const config = await readAutoCatalogConfig();
+  const enabled = config.autoEnabled !== false;
+  if (!enabled && !force) return;
+
+  const generatedSnapshot = await firestoreDb
+    .collection("listings")
+    .where("generated", "==", true)
+    .where("dayKey", "==", todayKey)
+    .get();
+  if (!force && generatedSnapshot.size >= AUTO_CATALOG_MIN_ITEMS) {
     return;
   }
 
-  if (now < endsAt) {
-    const remaining = formatCountdown(endsAt - now);
-    setFundMessage(`Timer still running: ${remaining}`, true);
-    renderCreditsShop();
-    return;
+  const generatedListings = buildGeneratedCatalogForDay(todayKey);
+  const batch = firestoreDb.batch();
+  for (const listing of generatedListings) {
+    const ref = firestoreDb.collection("listings").doc(String(listing.id));
+    batch.set(ref, {
+      title: listing.title,
+      brand: listing.brand,
+      category: listing.category,
+      price: listing.price,
+      rating: listing.rating,
+      reviewCount: listing.reviewCount,
+      description: listing.description,
+      features: listing.features,
+      rarity: listing.rarity,
+      stock: listing.stock,
+      shippingTime: listing.shippingTime,
+      is21plus: listing.is21plus,
+      imageUrl: listing.imageUrl,
+      createdBy: listing.createdBy,
+      createdByName: listing.createdByName,
+      status: listing.status,
+      generated: true,
+      dayKey: todayKey,
+      reviews: [],
+      createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    });
   }
 
-  const reward = getRandomTimerReward();
-  nextProgress.balance = round2((Number(nextProgress.balance) || 0) + reward);
-  nextProgress.totalFundsCollected = round2((Number(nextProgress.totalFundsCollected) || 0) + reward);
-  nextProgress.fundTimerEndsAt = now + FUND_TIMER_DURATION_MS;
-  persistDb();
-  setFundMessage(`Collected ${money(reward)}. Next timer started automatically.`);
-  setCheckoutMessage(`Added ${money(reward)} to your wallet.`);
-  renderWallet();
-  renderCreditsShop();
-  renderStats();
+  await batch.commit();
+  await writeAutoCatalogConfig({
+    autoEnabled: enabled,
+    lastGeneratedDayKey: todayKey,
+    lastGeneratedCount: generatedListings.length
+  });
+}
+
+function buildGeneratedCatalogForDay(dayKey) {
+  const rng = createSeededRandom(`site|${dayKey}|auto-catalog`);
+  const count = AUTO_CATALOG_MIN_ITEMS + Math.floor(rng() * (AUTO_CATALOG_MAX_ITEMS - AUTO_CATALOG_MIN_ITEMS + 1));
+  const generated = [];
+  for (let i = 0; i < count; i += 1) {
+    const category = pickCatalogCategory(rng);
+    const template = AUTO_CATALOG_CATEGORY_TEMPLATES[category] || AUTO_CATALOG_CATEGORY_TEMPLATES.Tech;
+    const rarity = pickWeightedWithRng(AUTO_CATALOG_RARITY_WEIGHTS, rng);
+    const rarityRules = AUTO_CATALOG_RARITY_RULES[rarity] || AUTO_CATALOG_RARITY_RULES.common;
+    const brand = buildFakeBrand(rng);
+    const model = AUTO_CATALOG_MODEL_NAMES[Math.floor(rng() * AUTO_CATALOG_MODEL_NAMES.length)];
+    const productType = template.productTypes[Math.floor(rng() * template.productTypes.length)];
+    const descriptor = template.descriptors[Math.floor(rng() * template.descriptors.length)];
+    const title = `${brand} ${model} ${descriptor} ${productType}`.replaceAll(/\s+/g, " ").trim().slice(0, 120);
+    const features = buildFeatureList(template, rng);
+    const description = buildGeneratedDescription(template, productType, descriptor).slice(0, 500);
+    const imageUrl = pickCatalogImageUrl(template.imageKey, dayKey, i, title);
+    const price = randomIntWithRng(rng, rarityRules.priceMin, rarityRules.priceMax);
+    const stock = randomIntWithRng(rng, rarityRules.stockMin, rarityRules.stockMax);
+    const rating = round2(randomFloatWithRng(rng, rarityRules.ratingMin, rarityRules.ratingMax));
+    const reviewCount = randomIntWithRng(rng, rarityRules.reviewsMin, rarityRules.reviewsMax);
+    generated.push({
+      id: buildGeneratedListingId(dayKey, i, title),
+      title,
+      brand,
+      category,
+      description,
+      features,
+      price,
+      stock,
+      rarity,
+      rating,
+      reviewCount,
+      imageUrl,
+      createdAt: new Date().toISOString(),
+      dayKey,
+      generated: true,
+      shippingTime: `${randomIntWithRng(rng, 1, 4)}-${randomIntWithRng(rng, 5, 9)} business days`,
+      is21plus: false,
+      createdBy: "auto_catalog",
+      createdByName: "system",
+      status: "active"
+    });
+  }
+  return generated;
+}
+
+function pickCatalogCategory(rng) {
+  const keys = Object.keys(AUTO_CATALOG_CATEGORY_TEMPLATES);
+  return keys[Math.floor(rng() * keys.length)] || "Tech";
+}
+
+function buildFakeBrand(rng) {
+  const first = AUTO_CATALOG_FAKE_BRAND_SYLLABLES.first[Math.floor(rng() * AUTO_CATALOG_FAKE_BRAND_SYLLABLES.first.length)] || "No";
+  const middle = AUTO_CATALOG_FAKE_BRAND_SYLLABLES.middle[Math.floor(rng() * AUTO_CATALOG_FAKE_BRAND_SYLLABLES.middle.length)] || "va";
+  const last = AUTO_CATALOG_FAKE_BRAND_SYLLABLES.last[Math.floor(rng() * AUTO_CATALOG_FAKE_BRAND_SYLLABLES.last.length)] || "ra";
+  return `${first}${middle}${last}`.slice(0, 16);
+}
+
+function buildFeatureList(template, rng) {
+  const pool = shuffleWithRng((template?.featurePool || []).slice(), rng);
+  const count = randomIntWithRng(rng, 3, 6);
+  const out = [];
+  for (let i = 0; i < Math.min(count, pool.length); i += 1) {
+    out.push(pool[i]);
+  }
+  return out;
+}
+
+function buildGeneratedDescription(template, productType, descriptor) {
+  const pool = Array.isArray(template?.descriptionPool) ? template.descriptionPool : [];
+  const first = pool[0] || "Built for everyday use and reliable performance.";
+  const second = pool[1] || "A practical pick for shoppers who want value and clean design.";
+  return `${descriptor} ${productType}. ${first} ${second}`;
+}
+
+function pickCatalogImageUrl(imageKey, dayKey, index, title) {
+  const key = String(imageKey || "tech").toLowerCase();
+  const list = AUTO_CATALOG_IMAGE_FILES[key] || AUTO_CATALOG_IMAGE_FILES.tech;
+  const seed = hashStringToInt(`${dayKey}|${index}|${title}`);
+  const imageName = list[seed % list.length] || list[0];
+  return `public/images/catalog/${key}/${imageName}`;
+}
+
+function buildGeneratedListingId(dayKey, index, title) {
+  const suffix = hashStringToInt(`${dayKey}|${index}|${title}`).toString(36).slice(0, 6);
+  return `gen-${dayKey}-${String(index + 1).padStart(3, "0")}-${suffix}`;
+}
+
+async function readAutoCatalogConfig() {
+  const fallback = readAutoCatalogConfigLocal();
+  if (!firestoreDb) return fallback;
+  try {
+    const doc = await firestoreDb.collection("system").doc("catalogConfig").get();
+    if (!doc.exists) return fallback;
+    const data = doc.data() || {};
+    return {
+      autoEnabled: data.autoEnabled !== false,
+      lastGeneratedDayKey: String(data.lastGeneratedDayKey || fallback.lastGeneratedDayKey || ""),
+      lastGeneratedCount: Math.max(0, Math.floor(Number(data.lastGeneratedCount) || 0))
+    };
+  } catch (error) {
+    console.error("[AutoCatalog] config read failed:", error);
+    return fallback;
+  }
+}
+
+async function writeAutoCatalogConfig(patch) {
+  const current = readAutoCatalogConfigLocal();
+  const next = {
+    autoEnabled: patch?.autoEnabled === undefined ? current.autoEnabled : patch.autoEnabled !== false,
+    lastGeneratedDayKey: String(patch?.lastGeneratedDayKey || current.lastGeneratedDayKey || ""),
+    lastGeneratedCount: Math.max(0, Math.floor(Number(patch?.lastGeneratedCount ?? current.lastGeneratedCount ?? 0)))
+  };
+  writeAutoCatalogConfigLocal(next);
+  if (!firestoreDb) return next;
+  await firestoreDb.collection("system").doc("catalogConfig").set(
+    {
+      autoEnabled: next.autoEnabled,
+      lastGeneratedDayKey: next.lastGeneratedDayKey,
+      lastGeneratedCount: next.lastGeneratedCount,
+      updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    },
+    { merge: true }
+  );
+  return next;
+}
+
+function readAutoCatalogConfigLocal() {
+  try {
+    const raw = localStorage.getItem(AUTO_CATALOG_LOCAL_CONFIG_KEY);
+    if (!raw) {
+      return {
+        autoEnabled: AUTO_CATALOG_DEFAULT_ENABLED,
+        lastGeneratedDayKey: "",
+        lastGeneratedCount: 0
+      };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      autoEnabled: parsed?.autoEnabled !== false,
+      lastGeneratedDayKey: String(parsed?.lastGeneratedDayKey || ""),
+      lastGeneratedCount: Math.max(0, Math.floor(Number(parsed?.lastGeneratedCount) || 0))
+    };
+  } catch {
+    return {
+      autoEnabled: AUTO_CATALOG_DEFAULT_ENABLED,
+      lastGeneratedDayKey: "",
+      lastGeneratedCount: 0
+    };
+  }
+}
+
+function writeAutoCatalogConfigLocal(config) {
+  try {
+    localStorage.setItem(AUTO_CATALOG_LOCAL_CONFIG_KEY, JSON.stringify(config));
+  } catch {
+    // Ignore local cache write failures.
+  }
+}
+
+function pickWeightedWithRng(weightedItems, rng) {
+  const total = weightedItems.reduce((sum, item) => sum + Number(item?.weight || 0), 0);
+  let roll = rng() * total;
+  for (const item of weightedItems) {
+    roll -= Number(item?.weight || 0);
+    if (roll <= 0) return String(item?.key || "common");
+  }
+  return String(weightedItems[weightedItems.length - 1]?.key || "common");
+}
+
+function randomIntWithRng(rng, min, max) {
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  return Math.floor(rng() * (hi - lo + 1)) + lo;
+}
+
+function randomFloatWithRng(rng, min, max) {
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  return lo + rng() * (hi - lo);
 }
 
 function handleBuyAgeId() {
@@ -550,23 +939,126 @@ function handleBuyAgeId() {
   renderListingPreview();
 }
 
+function handleClaim5MinReward() {
+  const progress = getProgressOrNull();
+  if (!progress && !ensureSignedIn("Sign in first to claim 5-minute rewards.")) return;
+  const nextProgress = getProgressOrNull();
+  if (!nextProgress) return;
+
+  const state = ensureFiveMinuteRewardState(nextProgress);
+  const now = Date.now();
+  const remainingCooldown = Math.max(0, Number(state.nextClaimAt || 0) - now);
+  const todayRemaining = Math.max(0, REWARD5_MIN_DAILY_CAP - (Number(state.todayTotal5minRewards) || 0));
+
+  if (todayRemaining <= 0) {
+    setFundMessage("Daily cap reached for 5-minute rewards.", true);
+    renderFiveMinuteReward(nextProgress);
+    return;
+  }
+  if (remainingCooldown > 0) {
+    setFundMessage(`Ready in ${formatCountdown(remainingCooldown)}.`, true);
+    renderFiveMinuteReward(nextProgress);
+    return;
+  }
+
+  const tier = pickWeightedTier();
+  const rolledAmount = randomInt(tier.min, tier.max);
+  const payout = Math.max(0, Math.min(rolledAmount, todayRemaining));
+  if (payout <= 0) {
+    setFundMessage("Daily cap reached for 5-minute rewards.", true);
+    renderFiveMinuteReward(nextProgress);
+    return;
+  }
+
+  addMoney(payout, "5min_reward", { tier: tier.key });
+  state.lastClaimAt = now;
+  state.nextClaimAt = now + REWARD5_MIN_COOLDOWN_MS;
+  state.lastRewardAmount = payout;
+  state.todayTotal5minRewards = round2((Number(state.todayTotal5minRewards) || 0) + payout);
+  state.claimHistory.unshift({
+    ts: new Date(now).toISOString(),
+    amount: payout,
+    tier: tier.key
+  });
+  state.claimHistory = state.claimHistory.slice(0, 10);
+
+  persistDb();
+  setFundMessage(`Reward claimed: ${money(payout)} (${tier.key}).`);
+  renderWallet();
+  renderCreditsShop();
+  renderStats();
+}
+
+function renderFiveMinuteReward(progress) {
+  const state = ensureFiveMinuteRewardState(progress);
+  const now = Date.now();
+  const remainingCooldown = Math.max(0, Number(state.nextClaimAt || 0) - now);
+  const todayTotal = round2(Number(state.todayTotal5minRewards) || 0);
+  const capRemaining = Math.max(0, REWARD5_MIN_DAILY_CAP - todayTotal);
+  const canClaim = remainingCooldown <= 0 && capRemaining > 0;
+
+  ui.reward5minClaimBtn.disabled = !canClaim;
+  ui.reward5minCountdown.textContent = canClaim ? "Ready" : formatCountdown(remainingCooldown);
+  ui.reward5minStatus.textContent = capRemaining <= 0
+    ? "Daily cap reached."
+    : canClaim
+      ? "Reward ready to claim."
+      : `Next reward in ${formatCountdown(remainingCooldown)}.`;
+  ui.reward5minLast.textContent = `Last reward: ${money(Number(state.lastRewardAmount) || 0)}`;
+  ui.reward5minToday.textContent = `Today's 5-min total: ${money(todayTotal)} / ${money(REWARD5_MIN_DAILY_CAP)}`;
+}
+
+function ensureFiveMinuteRewardState(progress) {
+  const todayKey = getTodayKey();
+  if (!progress.fiveMinReward || typeof progress.fiveMinReward !== "object") {
+    progress.fiveMinReward = {
+      todayKey,
+      lastClaimAt: null,
+      nextClaimAt: null,
+      todayTotal5minRewards: 0,
+      lastRewardAmount: 0,
+      claimHistory: []
+    };
+    return progress.fiveMinReward;
+  }
+  const state = progress.fiveMinReward;
+  if (String(state.todayKey || "") !== todayKey) {
+    state.todayKey = todayKey;
+    state.todayTotal5minRewards = 0;
+    state.claimHistory = [];
+  }
+  state.lastClaimAt = Number(state.lastClaimAt) > 0 ? Number(state.lastClaimAt) : null;
+  state.nextClaimAt = Number(state.nextClaimAt) > 0 ? Number(state.nextClaimAt) : null;
+  state.todayTotal5minRewards = round2(Math.max(0, Number(state.todayTotal5minRewards) || 0));
+  state.lastRewardAmount = round2(Math.max(0, Number(state.lastRewardAmount) || 0));
+  state.claimHistory = Array.isArray(state.claimHistory) ? state.claimHistory.slice(0, 10) : [];
+  return state;
+}
+
+function getTodayKey(ts = Date.now()) {
+  return getTodayKeyLocal(ts);
+}
+
+function pickWeightedTier() {
+  const roll = Math.random() * 100;
+  let cumulative = 0;
+  for (const tier of REWARD5_MIN_TIERS) {
+    cumulative += Number(tier.weight || 0);
+    if (roll < cumulative) return tier;
+  }
+  return REWARD5_MIN_TIERS[REWARD5_MIN_TIERS.length - 1];
+}
+
+function randomInt(min, max) {
+  const lo = Math.ceil(Number(min) || 0);
+  const hi = Math.floor(Number(max) || 0);
+  if (hi <= lo) return lo;
+  return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+}
+
 function setFundMessage(message, isError = false) {
   ui.creditsMsg.textContent = message;
   ui.creditsMsg.classList.toggle("error", isError);
-}
-
-function getRandomTimerReward() {
-  const progress = getProgressOrNull();
-  const balance = Number(progress?.balance) || 0;
-  const scale = balance > 10000 ? 0.92 : 1;
-
-  // 15% jackpot chance for $100.
-  if (Math.random() < 0.15) {
-    return round2(100 * scale);
-  }
-
-  const rewards = [5.34, 10.23, 15.43, 25.9, 50.43];
-  return round2(rewards[Math.floor(Math.random() * rewards.length)] * scale);
 }
 
 function filteredProducts() {
@@ -577,7 +1069,8 @@ function filteredProducts() {
 
   const filtered = getCatalog().filter((product) => {
     if (String(product.status || "active") !== "active") return false;
-    const matchesSearch = !search || product.title.toLowerCase().includes(search);
+    const haystack = `${product.title} ${product.brand || ""} ${product.description || ""}`.toLowerCase();
+    const matchesSearch = !search || haystack.includes(search);
     const matchesCategory = category === "all" || product.category === category;
     return matchesSearch && matchesCategory;
   });
@@ -607,8 +1100,10 @@ function renderProducts() {
   for (const product of products) {
     const effectiveRating = getEffectiveRating(product);
     const starCount = Math.max(1, Math.min(5, Math.round(effectiveRating)));
+    const reviewCount = Math.max(0, Math.floor(Number(product.reviewCount) || getReviewsForProduct(product).length || 0));
     const ageBadge = product.ageRestricted ? '<span class="age-badge">21+</span>' : "";
     const newDropBadge = isNewDrop(product.createdAt) ? '<span class="new-drop-badge">New Drop</span>' : "";
+    const rarityBadge = `<span class="rarity rarity-${normalizeRarity(product.rarity)}">${formatRarityLabel(product.rarity)}</span>`;
     const outOfStock = Number(product.stock) === 0;
     const card = document.createElement("article");
     card.className = "product-card";
@@ -616,14 +1111,18 @@ function renderProducts() {
     card.innerHTML = `
       <img src="${product.image}" alt="${product.title}" />
       <h3 class="product-title">${product.title}${ageBadge}${newDropBadge}</h3>
-      <p class="rating">${"★".repeat(starCount)} (${effectiveRating.toFixed(1)})</p>
+      <p class="product-sub">${escapeHtml(product.brand || "NovaGoods")} • ${escapeHtml(product.category)}</p>
+      <p class="rating">${"★".repeat(starCount)} ${effectiveRating.toFixed(1)} (${reviewCount.toLocaleString()} reviews)</p>
+      <p class="product-desc">${escapeHtml((product.description || "").slice(0, 110))}</p>
       <div class="meta">
-        <span class="price">${money(product.price)}</span>
+        <span class="price">${money(product.price)} • Stock ${Math.max(0, Number(product.stock) || 0)}</span>
+        ${rarityBadge}
         <button type="button" data-id="${product.id}" ${outOfStock ? "disabled" : ""}>${outOfStock ? "Sold Out" : "Add"}</button>
       </div>
     `;
 
     const button = card.querySelector("button");
+    attachImageFallback(card.querySelector("img"), product.title);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       addToCart(product.id);
@@ -668,12 +1167,27 @@ function renderListingPreview() {
   const outOfStock = Number(product.stock) === 0;
   const effectiveRating = getEffectiveRating(product);
   const starCount = Math.max(1, Math.min(5, Math.round(effectiveRating)));
+  const reviewCount = Math.max(0, Math.floor(Number(product.reviewCount) || reviews.length || 0));
   ui.previewImage.src = product.image;
   ui.previewImage.alt = product.title;
+  attachImageFallback(ui.previewImage, product.title);
   ui.previewTitle.textContent = product.title;
-  ui.previewMeta.textContent = `${product.category}${product.ageRestricted ? " • 21+ item" : ""} • Rarity random on delivery • Stock ${Math.max(0, Number(product.stock) || 0)} • ${product.shippingTime || "Standard shipping"} • Seller @${product.ownerUsername} • ${"★".repeat(starCount)} ${effectiveRating.toFixed(1)} • ${reviews.length} reviews`;
+  ui.previewMeta.textContent = `${product.brand || "NovaGoods"} • ${product.category}${product.ageRestricted ? " • 21+ item" : ""} • ${formatRarityLabel(product.rarity)} • Stock ${Math.max(0, Number(product.stock) || 0)} • ${product.shippingTime || "Standard shipping"} • Seller @${product.ownerUsername} • ${"★".repeat(starCount)} ${effectiveRating.toFixed(1)} • ${reviewCount.toLocaleString()} reviews`;
   ui.previewPrice.textContent = money(product.price);
   ui.previewDescription.textContent = product.description || `${product.title} is available in our marketplace.`;
+  ui.previewFeatures.innerHTML = "";
+  const featureList = Array.isArray(product.features) ? product.features.filter(Boolean).slice(0, 6) : [];
+  if (featureList.length) {
+    for (const feature of featureList) {
+      const li = document.createElement("li");
+      li.textContent = feature;
+      ui.previewFeatures.append(li);
+    }
+  } else {
+    const li = document.createElement("li");
+    li.textContent = "Standard marketplace quality.";
+    ui.previewFeatures.append(li);
+  }
   ui.previewAddToCartBtn.disabled = !canBuyAgeRestricted || outOfStock;
   ui.previewAddToCartBtn.textContent = outOfStock ? "Sold Out" : canBuyAgeRestricted ? "Add To Cart" : "21+ ID Required";
   renderPreviewReviews(reviews);
@@ -812,6 +1326,7 @@ function renderCollection() {
         Sell Item (est. ${money(estimate)})
       </button>
     `;
+    attachImageFallback(card.querySelector("img"), item.title);
     ui.collectionGrid.append(card);
   }
 }
@@ -869,6 +1384,287 @@ function renderStats() {
 
   ui.statsEarned.textContent = money(earned);
   ui.statsSpent.textContent = money(spent);
+}
+
+function renderDailyJobs() {
+  if (!ui.jobsList || !ui.jobsActiveCard || !ui.jobsMeta) return;
+  const user = getCurrentUser();
+  if (!user) {
+    ui.jobsActiveCard.classList.add("hidden");
+    ui.jobsList.innerHTML = '<p class="hint">Sign in to use Daily Jobs.</p>';
+    ui.jobsMeta.textContent = "Sign in required.";
+    return;
+  }
+
+  const state = ensureDailyJobsStateFresh(user);
+  const now = Date.now();
+  const capRemaining = Math.max(0, JOB_DAILY_EARNINGS_CAP - (Number(state.todayEarnings) || 0));
+  const cooldownRemainingMs = Math.max(0, Number(state.cooldownUntil || 0) - now);
+  const activeJob = state.activeJobId ? state.jobs.find((job) => job.id === state.activeJobId) : null;
+  const activeRemainingMs = activeJob ? Math.max(0, Number(state.endsAt || 0) - now) : 0;
+  const hasActive = Boolean(activeJob);
+  const readyToClaim = hasActive && activeRemainingMs <= 0 && !state.claimed;
+
+  ui.jobsMeta.textContent = `Today earned: ${money(Number(state.todayEarnings) || 0)} / ${money(JOB_DAILY_EARNINGS_CAP)} • Remaining cap: ${money(capRemaining)}`;
+
+  if (hasActive) {
+    ui.jobsActiveCard.classList.remove("hidden");
+    ui.jobsActiveCard.innerHTML = `
+      <div class="jobs-active-head">
+        <strong>Active Job: ${activeJob.title}</strong>
+        <span class="jobs-difficulty ${activeJob.difficulty.toLowerCase()}">${activeJob.difficulty}</span>
+      </div>
+      <p class="hint">${activeJob.description}</p>
+      <p><strong>Payout:</strong> ${money(activeJob.payout)} • <strong>Duration:</strong> ${formatJobDuration(activeJob.durationMs)}</p>
+      <p><strong>Status:</strong> ${readyToClaim ? "Completed" : `In progress (${formatCountdown(activeRemainingMs)})`}</p>
+      ${readyToClaim ? '<button type="button" data-action="claim-job">Claim Reward</button>' : ""}
+    `;
+  } else {
+    ui.jobsActiveCard.classList.add("hidden");
+    ui.jobsActiveCard.innerHTML = "";
+  }
+
+  const acceptBlockedByCooldown = cooldownRemainingMs > 0;
+  const acceptBlockedByCap = capRemaining <= 0;
+  ui.jobsList.innerHTML = "";
+  for (const job of state.jobs) {
+    const card = document.createElement("article");
+    card.className = "jobs-card";
+    const blockedByActive = hasActive;
+    const canAccept = !blockedByActive && !acceptBlockedByCooldown && !acceptBlockedByCap;
+    let buttonText = "Accept";
+    if (blockedByActive) buttonText = "Job Active";
+    else if (acceptBlockedByCooldown) buttonText = `Cooldown ${formatCountdown(cooldownRemainingMs)}`;
+    else if (acceptBlockedByCap) buttonText = "Daily Cap Reached";
+    card.innerHTML = `
+      <div class="jobs-card-head">
+        <strong>${job.title}</strong>
+        <span class="jobs-difficulty ${job.difficulty.toLowerCase()}">${job.difficulty}</span>
+      </div>
+      <p class="hint">${job.description}</p>
+      <p><strong>Duration:</strong> ${formatJobDuration(job.durationMs)} • <strong>Payout:</strong> ${money(job.payout)}</p>
+      <button type="button" data-action="accept-job" data-job-id="${job.id}" ${canAccept ? "" : "disabled"}>${buttonText}</button>
+    `;
+    ui.jobsList.append(card);
+  }
+}
+
+function handleJobsAction(event) {
+  const button = event.target.closest("[data-action]");
+  if (!button) return;
+  const action = String(button.dataset.action || "");
+  if (action === "accept-job") {
+    const jobId = String(button.dataset.jobId || "");
+    if (!jobId) return;
+    acceptDailyJob(jobId);
+    return;
+  }
+  if (action === "claim-job") {
+    claimDailyJob();
+  }
+}
+
+function acceptDailyJob(jobId) {
+  const user = getCurrentUser();
+  if (!user) {
+    ensureSignedIn("Sign in first to accept jobs.");
+    return;
+  }
+  const state = ensureDailyJobsStateFresh(user);
+  const now = Date.now();
+  const cooldownRemainingMs = Math.max(0, Number(state.cooldownUntil || 0) - now);
+  if (state.activeJobId) {
+    setJobsMessage("You already have an active job.", true);
+    renderDailyJobs();
+    return;
+  }
+  if (cooldownRemainingMs > 0) {
+    setJobsMessage(`Cooldown active: ${formatCountdown(cooldownRemainingMs)} remaining.`, true);
+    renderDailyJobs();
+    return;
+  }
+  if ((Number(state.todayEarnings) || 0) >= JOB_DAILY_EARNINGS_CAP) {
+    setJobsMessage("Daily jobs cap reached. Come back tomorrow.", true);
+    renderDailyJobs();
+    return;
+  }
+  const job = state.jobs.find((entry) => entry.id === jobId);
+  if (!job) {
+    setJobsMessage("Job not found.", true);
+    return;
+  }
+
+  state.activeJobId = job.id;
+  state.acceptedAt = now;
+  state.endsAt = now + Number(job.durationMs);
+  state.claimed = false;
+  persistDb();
+  setJobsMessage(`Accepted: ${job.title}`);
+  renderDailyJobs();
+}
+
+function claimDailyJob() {
+  const user = getCurrentUser();
+  if (!user) {
+    ensureSignedIn("Sign in first to claim jobs.");
+    return;
+  }
+  const state = ensureDailyJobsStateFresh(user);
+  const now = Date.now();
+  if (!state.activeJobId) {
+    setJobsMessage("No active job to claim.", true);
+    return;
+  }
+  const activeJob = state.jobs.find((entry) => entry.id === state.activeJobId);
+  if (!activeJob) {
+    state.activeJobId = null;
+    state.acceptedAt = null;
+    state.endsAt = null;
+    state.claimed = false;
+    persistDb();
+    setJobsMessage("Active job was reset.", true);
+    renderDailyJobs();
+    return;
+  }
+  if (Number(state.endsAt || 0) > now) {
+    setJobsMessage(`Job still in progress: ${formatCountdown(Number(state.endsAt || 0) - now)} remaining.`, true);
+    return;
+  }
+
+  const remainingCap = Math.max(0, JOB_DAILY_EARNINGS_CAP - (Number(state.todayEarnings) || 0));
+  const payout = round2(Math.max(0, Math.min(Number(activeJob.payout) || 0, remainingCap)));
+  if (payout > 0) {
+    addMoney(payout, "job_reward", { jobId: activeJob.id, title: activeJob.title, todayKey: state.todayKey });
+    state.todayEarnings = round2((Number(state.todayEarnings) || 0) + payout);
+  }
+
+  state.claimed = true;
+  state.activeJobId = null;
+  state.acceptedAt = null;
+  state.endsAt = null;
+  state.cooldownUntil = now + JOB_CLAIM_COOLDOWN_MS;
+  persistDb();
+
+  if (payout > 0) {
+    setJobsMessage(`Reward claimed: ${money(payout)} added to wallet.`);
+  } else {
+    setJobsMessage("Daily cap reached. Job completed with no payout.");
+  }
+  renderWallet();
+  renderStats();
+  renderDailyJobs();
+}
+
+function ensureDailyJobsStateFresh(user) {
+  const progress = user.progress;
+  const todayKey = getTodayKeyLocal();
+  if (!progress.jobsState || typeof progress.jobsState !== "object") {
+    progress.jobsState = buildInitialJobsState(user.id, todayKey);
+  }
+  const state = progress.jobsState;
+  if (state.todayKey !== todayKey) {
+    progress.jobsState = buildInitialJobsState(user.id, todayKey);
+    return progress.jobsState;
+  }
+  if (!Array.isArray(state.jobs) || !state.jobs.length) {
+    state.jobs = generateDailyJobsForUser(user.id, todayKey);
+  }
+  if (state.activeJobId && !state.jobs.some((job) => job.id === state.activeJobId)) {
+    state.activeJobId = null;
+    state.acceptedAt = null;
+    state.endsAt = null;
+    state.claimed = false;
+  }
+  return state;
+}
+
+function buildInitialJobsState(userId, todayKey) {
+  return {
+    todayKey,
+    jobs: generateDailyJobsForUser(userId, todayKey),
+    activeJobId: null,
+    acceptedAt: null,
+    endsAt: null,
+    claimed: false,
+    todayEarnings: 0,
+    cooldownUntil: null
+  };
+}
+
+function generateDailyJobsForUser(userId, todayKey) {
+  const rng = createSeededRandom(`${userId}|${todayKey}|daily-jobs`);
+  const jobsCount = 6 + Math.floor(rng() * 5);
+  const pool = shuffleWithRng(JOB_POOL.slice(), rng);
+  const jobs = [];
+  for (let i = 0; i < jobsCount; i += 1) {
+    const template = pool[i % pool.length];
+    const durationMinutes = JOB_MIN_DURATION_MINUTES + Math.floor(rng() * (JOB_MAX_DURATION_MINUTES - JOB_MIN_DURATION_MINUTES + 1));
+    const durationMs = durationMinutes * 60 * 1000;
+    const difficulty = durationMinutes <= 8 ? "Easy" : durationMinutes <= 18 ? "Medium" : "Hard";
+    const diffBonus = difficulty === "Hard" ? 70 : difficulty === "Medium" ? 35 : 0;
+    const base = durationMinutes * (8 + rng() * 6) + diffBonus;
+    const payout = clamp(Math.round(base), JOB_MIN_PAYOUT, JOB_MAX_PAYOUT);
+    jobs.push({
+      id: `${todayKey}-${i + 1}-${Math.floor(rng() * 1000000)}`,
+      title: template.title,
+      description: template.description,
+      durationMs,
+      payout: round2(payout),
+      difficulty
+    });
+  }
+  return jobs;
+}
+
+function setJobsMessage(message, isError = false) {
+  if (!ui.jobsMsg) return;
+  ui.jobsMsg.textContent = message;
+  ui.jobsMsg.classList.toggle("error", isError);
+}
+
+function getTodayKeyLocal(ts = Date.now()) {
+  const d = new Date(ts);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function hashStringToInt(value) {
+  let hash = 2166136261;
+  const str = String(value || "");
+  for (let i = 0; i < str.length; i += 1) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function createSeededRandom(seedSource) {
+  let seed = hashStringToInt(seedSource);
+  return () => {
+    seed += 0x6d2b79f5;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleWithRng(array, rng) {
+  for (let i = array.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+function formatJobDuration(durationMs) {
+  const minutes = Math.max(1, Math.round(Number(durationMs || 0) / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rem = minutes % 60;
+  return rem ? `${hours}h ${rem}m` : `${hours}h`;
 }
 
 function handleCollectionAction(event) {
@@ -1446,11 +2242,14 @@ async function handleAdminAdd(event) {
 
     const listingPayload = {
       title: title.slice(0, 120),
+      brand: (title.split(/\s+/)[0] || "NovaGoods").slice(0, 40),
       category: category.slice(0, 40),
       description: description.slice(0, 500),
       rarity: "common",
       price: round2(price),
       rating: round2(safeRating),
+      reviewCount: randomInt(5, 120),
+      features: [],
       stock,
       shippingTime,
       imageUrl: image,
@@ -1597,6 +2396,11 @@ async function initializeGlobalListingSync() {
   setSyncStatusMessage("Connecting to Firestore...");
   try {
     await initFirebase();
+    try {
+      await ensureAutoCatalogFresh();
+    } catch (error) {
+      console.error("[AutoCatalog] startup generate skipped:", error);
+    }
     const initial = await getListings();
     applyIncomingListings(initial);
     subscribeListings(applyIncomingListings);
@@ -1767,16 +2571,23 @@ function handleStorageSync(event) {
 function mapFirestoreDocToListing(doc) {
   const data = doc.data() || {};
   const createdAtMs = data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now();
-  const image = data.imageUrl || data.base64Image || fallbackImageForTitle(data.title || "item");
+  const image = normalizeRuntimeImageUrl(data.imageUrl || data.base64Image || fallbackImageForTitle(data.title || "item"));
+  const rarity = normalizeRarity(data.rarity || "common");
+  const features = Array.isArray(data.features)
+    ? data.features.map((item) => String(item || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6)
+    : [];
   return {
     id: doc.id,
     title: String(data.title || "Untitled Item"),
+    brand: String(data.brand || "NovaGoods").trim().slice(0, 40) || "NovaGoods",
     category: String(data.category || "General"),
     price: round2(Math.max(0.01, Number(data.price) || 0.01)),
     rating: round2(clamp(Number(data.rating) || 4.2, 1, 5)),
+    reviewCount: Math.max(0, Math.floor(Number(data.reviewCount) || 0)),
     image,
     ageRestricted: Boolean(data.is21plus),
-    rarity: "common",
+    rarity,
+    features,
     stock: Math.max(0, Math.floor(Number(data.stock) || 50)),
     shippingTime: String(data.shippingTime || "2-4 business days"),
     ownerUsername: normalizeUsername(data.createdByName || data.createdBy || "ronin") || "ronin",
@@ -1784,6 +2595,8 @@ function mapFirestoreDocToListing(doc) {
     status: String(data.status || "active"),
     description: String(data.description || "").slice(0, 500),
     reviews: normalizeReviews(data.reviews),
+    dayKey: String(data.dayKey || ""),
+    generated: data.generated === true,
     createdAt: new Date(createdAtMs).toISOString()
   };
 }
@@ -1792,17 +2605,24 @@ async function addListing(listing) {
   if (!firestoreDb) throw new Error("Firestore not initialized");
   const payload = {
     title: String(listing.title || "").trim(),
+    brand: String(listing.brand || "NovaGoods").trim().slice(0, 40) || "NovaGoods",
     category: String(listing.category || "").trim(),
     price: round2(Math.max(0.01, Number(listing.price) || 0.01)),
     rating: round2(clamp(Number(listing.rating) || 4.2, 1, 5)),
+    reviewCount: Math.max(0, Math.floor(Number(listing.reviewCount) || 0)),
     description: String(listing.description || "").trim().slice(0, 500),
-    rarity: "common",
+    rarity: normalizeRarity(listing.rarity || "common"),
+    features: Array.isArray(listing.features)
+      ? listing.features.map((item) => String(item || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6)
+      : [],
     stock: Math.max(0, Math.floor(Number(listing.stock) || 0)),
     shippingTime: String(listing.shippingTime || "2-4 business days").trim().slice(0, 50),
     is21plus: Boolean(listing.is21plus),
     createdBy: String(listing.createdBy || "ronin"),
     createdByName: String(listing.createdByName || "ronin"),
     status: String(listing.status || "active"),
+    dayKey: String(listing.dayKey || ""),
+    generated: listing.generated === true,
     reviews: [],
     createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
   };
@@ -1856,6 +2676,10 @@ async function buyListing(listingId) {
     if (String(listing.status || "active") !== "active") {
       throw new Error("Listing already sold");
     }
+    const currentStock = Math.max(0, Math.floor(Number(listing.stock) || 0));
+    if (currentStock <= 0) {
+      throw new Error("Listing out of stock");
+    }
 
     tx.set(orderRef, {
       listingId: String(listingId),
@@ -1865,7 +2689,10 @@ async function buyListing(listingId) {
       createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
       status: "created"
     });
-    tx.update(listingRef, { status: "sold" });
+    tx.update(listingRef, {
+      stock: currentStock - 1,
+      status: "active"
+    });
   });
 
   return orderRef.id;
@@ -2085,6 +2912,9 @@ function defaultProgress() {
     cart: {},
     orders: [],
     firestoreOrders: [],
+    jobsState: null,
+    fiveMinReward: null,
+    moneyLedger: [],
     search: "",
     category: "all",
     sort: "featured"
@@ -2198,10 +3028,12 @@ function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefault
     seen.add(id);
 
     const title = String(item.title || "Untitled Item").trim().slice(0, 120) || "Untitled Item";
+    const brand = String(item.brand || "NovaGoods").trim().slice(0, 40) || "NovaGoods";
     const category = String(item.category || "General").trim().slice(0, 40) || "General";
     const price = round2(Math.max(0.01, Number(item.price) || 0.01));
     const rating = round2(clamp(Number(item.rating) || 4.2, 1, 5));
-    const image = String(item.image || "").trim() || fallbackImageForTitle(title);
+    const reviewCount = Math.max(0, Math.floor(Number(item.reviewCount) || 0));
+    const image = normalizeRuntimeImageUrl(String(item.image || "").trim() || fallbackImageForTitle(title));
     const ownerUsername = normalizeUsername(item.ownerUsername || "ronin") || "ronin";
     const isPublic = true;
     const status = ["active", "sold", "archived"].includes(String(item.status || "active")) ? String(item.status || "active") : "active";
@@ -2217,24 +3049,34 @@ function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefault
     )
       .trim()
       .slice(0, 500);
+    const features = Array.isArray(item.features)
+      ? item.features.map((entry) => String(entry || "").trim().slice(0, 80)).filter(Boolean).slice(0, 6)
+      : [];
     const reviews = normalizeReviews(item.reviews);
+    const dayKey = String(item.dayKey || "");
+    const generated = item.generated === true;
     const createdAt = item.createdAt || new Date().toISOString();
 
     normalized.push({
       id,
       title,
+      brand,
       category,
       price,
       rating,
+      reviewCount,
       image,
       ownerUsername,
       isPublic,
       status,
       ageRestricted,
       rarity,
+      features,
       stock,
       shippingTime,
       description,
+      dayKey,
+      generated,
       reviews,
       createdAt
     });
@@ -2304,7 +3146,7 @@ function normalizeCollectionInventory(input) {
       id: String(item.id || crypto.randomUUID()),
       productId: item.productId ? String(item.productId) : null,
       title: String(item.title || "Item").trim() || "Item",
-      image: String(item.image || "").trim() || fallbackImageForTitle(item.title || "item"),
+      image: normalizeRuntimeImageUrl(String(item.image || "").trim() || fallbackImageForTitle(item.title || "item")),
       qty: Math.max(1, Math.floor(Number(item.qty) || 1)),
       valueEach: round2(Math.max(0.01, Number(item.valueEach) || 1)),
       rarity: normalizeRarity(item.rarity),
@@ -2319,6 +3161,11 @@ function normalizeRarity(value) {
     return rarity;
   }
   return "common";
+}
+
+function formatRarityLabel(value) {
+  const rarity = normalizeRarity(value);
+  return rarity.charAt(0).toUpperCase() + rarity.slice(1);
 }
 
 function normalizeConditions(input) {
@@ -2463,6 +3310,59 @@ function estimateNetSaleValue(item) {
   return round2(Math.min(SELL_CAP, base * (1 - SELL_TAX_RATE)));
 }
 
+function normalizeJobsState(raw, progress, todayKey) {
+  if (!raw || typeof raw !== "object") return null;
+  const jobs = Array.isArray(raw.jobs)
+    ? raw.jobs
+        .map((job) => ({
+          id: String(job?.id || ""),
+          title: String(job?.title || "Job"),
+          description: String(job?.description || ""),
+          durationMs: Math.max(60 * 1000, Math.floor(Number(job?.durationMs) || 0)),
+          payout: round2(Math.max(0, Number(job?.payout) || 0)),
+          difficulty: ["Easy", "Medium", "Hard"].includes(String(job?.difficulty)) ? String(job.difficulty) : "Easy"
+        }))
+        .filter((job) => job.id)
+    : [];
+
+  const state = {
+    todayKey: String(raw.todayKey || todayKey),
+    jobs,
+    activeJobId: raw.activeJobId ? String(raw.activeJobId) : null,
+    acceptedAt: Number(raw.acceptedAt) > 0 ? Number(raw.acceptedAt) : null,
+    endsAt: Number(raw.endsAt) > 0 ? Number(raw.endsAt) : null,
+    claimed: raw.claimed === true,
+    todayEarnings: round2(Math.max(0, Number(raw.todayEarnings) || 0)),
+    cooldownUntil: Number(raw.cooldownUntil) > 0 ? Number(raw.cooldownUntil) : null
+  };
+  if (state.todayKey !== todayKey) return null;
+  if (state.activeJobId && !state.jobs.some((job) => job.id === state.activeJobId)) {
+    state.activeJobId = null;
+    state.acceptedAt = null;
+    state.endsAt = null;
+    state.claimed = false;
+  }
+  return state;
+}
+
+function normalizeFiveMinRewardState(raw, todayKey) {
+  if (!raw || typeof raw !== "object") return null;
+  const normalized = {
+    todayKey: String(raw.todayKey || todayKey),
+    lastClaimAt: Number(raw.lastClaimAt) > 0 ? Number(raw.lastClaimAt) : null,
+    nextClaimAt: Number(raw.nextClaimAt) > 0 ? Number(raw.nextClaimAt) : null,
+    todayTotal5minRewards: round2(Math.max(0, Number(raw.todayTotal5minRewards) || 0)),
+    lastRewardAmount: round2(Math.max(0, Number(raw.lastRewardAmount) || 0)),
+    claimHistory: Array.isArray(raw.claimHistory) ? raw.claimHistory.slice(0, 10) : []
+  };
+  if (normalized.todayKey !== todayKey) {
+    normalized.todayKey = todayKey;
+    normalized.todayTotal5minRewards = 0;
+    normalized.claimHistory = [];
+  }
+  return normalized;
+}
+
 function normalizeProgress(progress, catalog) {
   const base = defaultProgress();
   if (!progress || typeof progress !== "object") {
@@ -2498,6 +3398,9 @@ function normalizeProgress(progress, catalog) {
     cart,
     orders: Array.isArray(progress.orders) ? progress.orders.slice(0, 50) : [],
     firestoreOrders: Array.isArray(progress.firestoreOrders) ? progress.firestoreOrders.slice(0, 100) : [],
+    jobsState: normalizeJobsState(progress.jobsState, progress, getTodayKeyLocal()),
+    fiveMinReward: normalizeFiveMinRewardState(progress.fiveMinReward, getTodayKeyLocal()),
+    moneyLedger: Array.isArray(progress.moneyLedger) ? progress.moneyLedger.slice(0, 200) : [],
     search: String(progress.search || ""),
     category: categories.includes(progress.category) ? progress.category : "all",
     sort: ["featured", "price-low", "price-high", "rating"].includes(progress.sort) ? progress.sort : "featured"
@@ -2515,8 +3418,34 @@ function isNewDrop(createdAt) {
 }
 
 function fallbackImageForTitle(title) {
-  const encoded = encodeURIComponent(title || "product");
-  return `https://picsum.photos/seed/${encoded}/600/600`;
+  const seed = hashStringToInt(String(title || "product"));
+  const all = Object.values(AUTO_CATALOG_IMAGE_FILES).flat();
+  const name = all[seed % all.length] || "tech-01.svg";
+  const folder = name.split("-")[0] || "tech";
+  return `public/images/catalog/${folder}/${name}`;
+}
+
+function normalizeRuntimeImageUrl(src) {
+  const value = String(src || "").trim();
+  if (!value) return value;
+  if (value.startsWith("data:") || value.startsWith("http://") || value.startsWith("https://")) {
+    return value;
+  }
+  if (typeof window !== "undefined" && window.location?.protocol === "file:") {
+    if (value.startsWith("/public/")) return `.${value}`;
+    if (value.startsWith("/")) return `.${value}`;
+  }
+  return value;
+}
+
+function attachImageFallback(imageEl, title) {
+  if (!imageEl) return;
+  const safeFallback = normalizeRuntimeImageUrl(fallbackImageForTitle(title || "item"));
+  imageEl.onerror = () => {
+    if (imageEl.dataset.fallbackApplied === "1") return;
+    imageEl.dataset.fallbackApplied = "1";
+    imageEl.src = safeFallback;
+  };
 }
 
 function readFileAsDataUrl(file) {
