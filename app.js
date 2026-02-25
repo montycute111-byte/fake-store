@@ -1,21 +1,13 @@
 const DB_KEY = "megacart_accounts_v1";
 const LISTINGS_CACHE_KEY = "megacart_listings_cache_v1";
-// Primary static config block: fill these with your Firebase Web App credentials.
-const FIREBASE_CONFIG = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  projectId: "REPLACE_ME",
-  storageBucket: "REPLACE_ME.appspot.com",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME"
-};
-const FIREBASE_CONFIG_DEFAULT = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  projectId: "REPLACE_ME",
-  storageBucket: "REPLACE_ME.appspot.com",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME"
+const firebaseConfig = {
+  apiKey: "AIzaSyDScVaJ4oPh_XcYUqafoz0v1o3KgQeRclU",
+  authDomain: "fakestoresim.firebaseapp.com",
+  projectId: "fakestoresim",
+  storageBucket: "fakestoresim.firebasestorage.app",
+  messagingSenderId: "475969514502",
+  appId: "1:475969514502:web:fc9dba8fde83fb6398a787",
+  measurementId: "G-K1Q2861LZG"
 };
 const GUEST_USER_ID_KEY = "megacart_guest_user_id_v1";
 const DEMO_LISTING_IDS = new Set(["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11"]);
@@ -95,6 +87,13 @@ const ui = {
   creditsView: document.querySelector("#creditsView"),
   collectionView: document.querySelector("#collectionView"),
   collectionGrid: document.querySelector("#collectionGrid"),
+  friendRequestForm: document.querySelector("#friendRequestForm"),
+  friendUsernameInput: document.querySelector("#friendUsernameInput"),
+  tradeFriendSelect: document.querySelector("#tradeFriendSelect"),
+  friendRequestsList: document.querySelector("#friendRequestsList"),
+  friendsList: document.querySelector("#friendsList"),
+  tradeInboxList: document.querySelector("#tradeInboxList"),
+  socialMsg: document.querySelector("#socialMsg"),
   trackingView: document.querySelector("#trackingView"),
   trackingList: document.querySelector("#trackingList"),
   statsView: document.querySelector("#statsView"),
@@ -113,6 +112,7 @@ const ui = {
   adminAddForm: document.querySelector("#adminAddForm"),
   adminAddBtn: document.querySelector("#adminAddBtn"),
   adminListings: document.querySelector("#adminListings"),
+  adminOrders: document.querySelector("#adminOrders"),
   adminMsg: document.querySelector("#adminMsg"),
   deliveryPopup: document.querySelector("#deliveryPopup"),
   deliveryPopupImage: document.querySelector("#deliveryPopupImage"),
@@ -123,6 +123,9 @@ const ui = {
 init();
 
 function init() {
+  if (!Array.isArray(db.tradeRequests)) {
+    db.tradeRequests = [];
+  }
   ensureActiveShopperSession();
   hydrateCatalogFromLocalCache();
   populateCategories();
@@ -205,6 +208,18 @@ function bindEvents() {
   });
   ui.deliveryPopupClose.addEventListener("click", hideDeliveryPopup);
   ui.collectionGrid.addEventListener("click", handleCollectionAction);
+  if (ui.friendRequestForm) {
+    ui.friendRequestForm.addEventListener("submit", handleFriendRequestSubmit);
+  }
+  if (ui.friendRequestsList) {
+    ui.friendRequestsList.addEventListener("click", handleFriendRequestAction);
+  }
+  if (ui.friendsList) {
+    ui.friendsList.addEventListener("click", handleFriendRequestAction);
+  }
+  if (ui.tradeInboxList) {
+    ui.tradeInboxList.addEventListener("click", handleTradeInboxAction);
+  }
   window.addEventListener("storage", handleStorageSync);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
@@ -339,10 +354,20 @@ function renderCreditsShop() {
   if (isAdminUser(user)) {
     ui.adminPanel.classList.remove("hidden");
     renderAdminListings();
+    renderAdminOrders().catch((error) => {
+      console.error("[Firestore] admin orders render failed:", error);
+    });
   } else {
     ui.adminPanel.classList.add("hidden");
     ui.adminListings.innerHTML = "";
+    if (ui.adminOrders) {
+      ui.adminOrders.innerHTML = "";
+    }
   }
+
+  syncUserOrdersFromFirestore().catch((error) => {
+    console.error("[Firestore] user orders sync failed:", error);
+  });
 }
 
 function renderAgeIdShop(progress) {
@@ -418,7 +443,7 @@ function renderAdminListings() {
           <strong class="admin-title">${product.title}</strong>
           <span class="admin-price">${money(product.price)}</span>
         </div>
-        <p class="admin-meta">${product.category}${product.ageRestricted ? " • 21+" : ""} • ${stockLabel} • ${product.shippingTime || "Standard shipping"} • Rarity ${normalizeRarity(product.rarity)} • Rating ${effectiveRating.toFixed(1)} • @${product.ownerUsername}</p>
+        <p class="admin-meta">${product.category}${product.ageRestricted ? " • 21+" : ""} • ${stockLabel} • ${product.shippingTime || "Standard shipping"} • Rarity random on delivery • Rating ${effectiveRating.toFixed(1)} • @${product.ownerUsername}</p>
         <div class="admin-row-controls">
           <label class="admin-price-input">
             Price
@@ -443,6 +468,44 @@ function renderAdminListings() {
     });
 
     ui.adminListings.append(row);
+  }
+}
+
+async function renderAdminOrders() {
+  if (!ui.adminOrders || !firestoreDb || !isAdminUser(getCurrentUser())) return;
+  ui.adminOrders.innerHTML = "";
+
+  const head = document.createElement("header");
+  head.className = "admin-head";
+  head.innerHTML = `
+    <h3>All Orders</h3>
+    <p>Global Firestore purchase history.</p>
+  `;
+  ui.adminOrders.append(head);
+
+  const orders = await fetchAllOrdersForAdmin();
+  if (!orders.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No Firestore orders yet.";
+    ui.adminOrders.append(empty);
+    return;
+  }
+
+  for (const order of orders.slice(0, 40)) {
+    const card = document.createElement("article");
+    card.className = "admin-row";
+    card.innerHTML = `
+      <div class="admin-row-body">
+        <div class="admin-row-head">
+          <strong class="admin-title">Order ${order.id}</strong>
+          <span class="admin-price">${money(Number(order.priceAtPurchase) || 0)}</span>
+        </div>
+        <p class="admin-meta">Listing: ${order.listingId} • Buyer: ${order.buyerUid} • Status: ${order.status}</p>
+        <p class="admin-meta">${new Date(order.createdAt || Date.now()).toLocaleString()}</p>
+      </div>
+    `;
+    ui.adminOrders.append(card);
   }
 }
 
@@ -535,6 +598,7 @@ function filteredProducts() {
   const sort = progress?.sort || "featured";
 
   const filtered = getCatalog().filter((product) => {
+    if (String(product.status || "active") !== "active") return false;
     const matchesSearch = !search || product.title.toLowerCase().includes(search);
     const matchesCategory = category === "all" || product.category === category;
     return matchesSearch && matchesCategory;
@@ -629,7 +693,7 @@ function renderListingPreview() {
   ui.previewImage.src = product.image;
   ui.previewImage.alt = product.title;
   ui.previewTitle.textContent = product.title;
-  ui.previewMeta.textContent = `${product.category}${product.ageRestricted ? " • 21+ item" : ""} • ${normalizeRarity(product.rarity)} • Stock ${Math.max(0, Number(product.stock) || 0)} • ${product.shippingTime || "Standard shipping"} • Seller @${product.ownerUsername} • ${"★".repeat(starCount)} ${effectiveRating.toFixed(1)} • ${reviews.length} reviews`;
+  ui.previewMeta.textContent = `${product.category}${product.ageRestricted ? " • 21+ item" : ""} • Rarity random on delivery • Stock ${Math.max(0, Number(product.stock) || 0)} • ${product.shippingTime || "Standard shipping"} • Seller @${product.ownerUsername} • ${"★".repeat(starCount)} ${effectiveRating.toFixed(1)} • ${reviews.length} reviews`;
   ui.previewPrice.textContent = money(product.price);
   ui.previewDescription.textContent = product.description || `${product.title} is available in our marketplace.`;
   ui.previewAddToCartBtn.disabled = !canBuyAgeRestricted || outOfStock;
@@ -705,7 +769,9 @@ function renderCart() {
 
 function renderOrders() {
   const progress = getProgressOrNull();
-  const orders = progress ? progress.orders : [];
+  const localOrders = progress ? progress.orders : [];
+  const remoteOrders = progress && Array.isArray(progress.firestoreOrders) ? progress.firestoreOrders : [];
+  const orders = [...localOrders, ...remoteOrders].slice(0, 20);
   ui.ordersList.innerHTML = "";
 
   if (!orders.length) {
@@ -742,6 +808,7 @@ function renderOrders() {
 function renderCollection() {
   const progress = getProgressOrNull();
   const inventory = progress ? normalizeCollectionInventory(progress.collectionInventory) : [];
+  renderSocialPanel();
 
   ui.collectionGrid.innerHTML = "";
   if (!inventory.length) {
@@ -752,6 +819,7 @@ function renderCollection() {
     return;
   }
 
+  const friendCount = progress ? normalizeUserIdArray(progress.friends).length : 0;
   for (const item of inventory) {
     const card = document.createElement("article");
     card.className = `collection-card rarity-${item.rarity}`;
@@ -767,9 +835,323 @@ function renderCollection() {
       <button type="button" class="collection-sell-btn" data-id="${item.id}">
         Sell Item (est. ${money(estimate)})
       </button>
+      <button type="button" class="collection-trade-btn" data-id="${item.id}" ${friendCount ? "" : "disabled"}>
+        ${friendCount ? "Offer Trade to Friend" : "Add a Friend to Trade"}
+      </button>
     `;
     ui.collectionGrid.append(card);
   }
+}
+
+function renderSocialPanel() {
+  if (!ui.friendsList || !ui.friendRequestsList || !ui.tradeInboxList || !ui.tradeFriendSelect) return;
+  const user = getCurrentUser();
+  if (!user) {
+    ui.friendsList.innerHTML = '<p class="hint">Sign in to use friends.</p>';
+    ui.friendRequestsList.innerHTML = "";
+    ui.tradeInboxList.innerHTML = "";
+    ui.tradeFriendSelect.innerHTML = '<option value="">Select friend</option>';
+    return;
+  }
+
+  const progress = ensureSocialProgressState(user.progress);
+  const friendIds = normalizeUserIdArray(progress.friends);
+  const incoming = normalizeUserIdArray(progress.incomingFriendRequests);
+  const outgoing = normalizeUserIdArray(progress.outgoingFriendRequests);
+  const pendingTrades = (db.tradeRequests || []).filter((trade) => trade.toUserId === user.id && trade.status === "pending");
+
+  ui.tradeFriendSelect.innerHTML = '<option value="">Select friend</option>';
+  for (const friendId of friendIds) {
+    const friend = findUserById(friendId);
+    if (!friend) continue;
+    const option = document.createElement("option");
+    option.value = friend.id;
+    option.textContent = `@${friend.username}`;
+    ui.tradeFriendSelect.append(option);
+  }
+
+  ui.friendsList.innerHTML = "";
+  if (!friendIds.length) {
+    ui.friendsList.innerHTML = '<p class="hint">No friends added yet.</p>';
+  } else {
+    for (const friendId of friendIds) {
+      const friend = findUserById(friendId);
+      if (!friend) continue;
+      const row = document.createElement("div");
+      row.className = "social-item";
+      row.innerHTML = `
+        <strong>@${friend.username}</strong>
+        <button type="button" class="social-action danger" data-action="remove-friend" data-id="${friend.id}">Remove</button>
+      `;
+      ui.friendsList.append(row);
+    }
+  }
+
+  ui.friendRequestsList.innerHTML = "";
+  if (!incoming.length) {
+    ui.friendRequestsList.innerHTML = '<p class="hint">No incoming requests.</p>';
+  } else {
+    for (const fromUserId of incoming) {
+      const fromUser = findUserById(fromUserId);
+      if (!fromUser) continue;
+      const row = document.createElement("div");
+      row.className = "social-item";
+      row.innerHTML = `
+        <strong>@${fromUser.username}</strong>
+        <div class="social-item-actions">
+          <button type="button" class="social-action" data-action="accept-friend" data-id="${fromUser.id}">Accept</button>
+          <button type="button" class="social-action danger" data-action="decline-friend" data-id="${fromUser.id}">Decline</button>
+        </div>
+      `;
+      ui.friendRequestsList.append(row);
+    }
+  }
+
+  ui.tradeInboxList.innerHTML = "";
+  if (!pendingTrades.length) {
+    ui.tradeInboxList.innerHTML = '<p class="hint">No incoming trade offers.</p>';
+  } else {
+    for (const trade of pendingTrades.slice(0, 25)) {
+      const sender = findUserById(trade.fromUserId);
+      const title = String(trade?.item?.title || "Item");
+      const rarity = normalizeRarity(trade?.item?.rarity);
+      const row = document.createElement("div");
+      row.className = "social-item";
+      row.innerHTML = `
+        <div>
+          <strong>${title}</strong>
+          <p class="hint">From @${sender?.username || "unknown"} • ${rarity}</p>
+        </div>
+        <div class="social-item-actions">
+          <button type="button" class="social-action" data-action="accept-trade" data-id="${trade.id}">Accept</button>
+          <button type="button" class="social-action danger" data-action="decline-trade" data-id="${trade.id}">Decline</button>
+        </div>
+      `;
+      ui.tradeInboxList.append(row);
+    }
+  }
+
+  if (!outgoing.length && ui.socialMsg && !ui.socialMsg.classList.contains("error")) {
+    ui.socialMsg.textContent = "";
+  }
+}
+
+function handleFriendRequestSubmit(event) {
+  event.preventDefault();
+  const current = getCurrentUser();
+  if (!current) {
+    ensureSignedIn("Sign in first to add friends.");
+    return;
+  }
+  const progress = ensureSocialProgressState(current.progress);
+  const form = new FormData(event.currentTarget);
+  const targetUsername = normalizeUsername(form.get("username"));
+  if (!targetUsername) {
+    setSocialMessage("Enter a username.", true);
+    return;
+  }
+  if (targetUsername === current.username) {
+    setSocialMessage("You cannot add yourself.", true);
+    return;
+  }
+  const targetUser = db.users.find((user) => user.username === targetUsername);
+  if (!targetUser) {
+    setSocialMessage("User not found.", true);
+    return;
+  }
+
+  const targetProgress = ensureSocialProgressState(targetUser.progress);
+  if (normalizeUserIdArray(progress.friends).includes(targetUser.id)) {
+    setSocialMessage("Already friends.");
+    return;
+  }
+  if (normalizeUserIdArray(progress.outgoingFriendRequests).includes(targetUser.id)) {
+    setSocialMessage("Friend request already sent.");
+    return;
+  }
+  if (normalizeUserIdArray(progress.incomingFriendRequests).includes(targetUser.id)) {
+    acceptFriendRequestInternal(current.id, targetUser.id);
+    persistDb();
+    setSocialMessage(`You are now friends with @${targetUser.username}.`);
+    renderCollection();
+    return;
+  }
+
+  progress.outgoingFriendRequests.push(targetUser.id);
+  targetProgress.incomingFriendRequests.push(current.id);
+  progress.outgoingFriendRequests = normalizeUserIdArray(progress.outgoingFriendRequests);
+  targetProgress.incomingFriendRequests = normalizeUserIdArray(targetProgress.incomingFriendRequests);
+  persistDb();
+  setSocialMessage(`Friend request sent to @${targetUser.username}.`);
+  event.currentTarget.reset();
+  renderCollection();
+}
+
+function handleFriendRequestAction(event) {
+  const actionBtn = event.target.closest("[data-action]");
+  if (!actionBtn) return;
+  const action = actionBtn.dataset.action;
+  const peerId = String(actionBtn.dataset.id || "");
+  if (!peerId) return;
+  const current = getCurrentUser();
+  if (!current) return;
+
+  if (action === "accept-friend") {
+    acceptFriendRequestInternal(current.id, peerId);
+    persistDb();
+    const peer = findUserById(peerId);
+    setSocialMessage(`Accepted @${peer?.username || "user"}.`);
+  } else if (action === "decline-friend") {
+    declineFriendRequestInternal(current.id, peerId);
+    persistDb();
+    setSocialMessage("Friend request declined.");
+  } else if (action === "remove-friend") {
+    removeFriendInternal(current.id, peerId);
+    persistDb();
+    setSocialMessage("Friend removed.");
+  }
+  renderCollection();
+}
+
+function handleTradeInboxAction(event) {
+  const actionBtn = event.target.closest("[data-action]");
+  if (!actionBtn) return;
+  const action = actionBtn.dataset.action;
+  const tradeId = String(actionBtn.dataset.id || "");
+  if (!tradeId) return;
+
+  if (action === "accept-trade") {
+    const accepted = acceptTradeInternal(tradeId);
+    if (accepted) {
+      setSocialMessage("Trade accepted. Item transferred.");
+    }
+  } else if (action === "decline-trade") {
+    const trade = (db.tradeRequests || []).find((entry) => entry.id === tradeId);
+    if (trade) {
+      trade.status = "declined";
+      persistDb();
+      setSocialMessage("Trade declined.");
+    }
+  }
+  renderCollection();
+}
+
+function setSocialMessage(message, isError = false) {
+  if (!ui.socialMsg) return;
+  ui.socialMsg.textContent = message;
+  ui.socialMsg.classList.toggle("error", isError);
+}
+
+function ensureSocialProgressState(progress) {
+  if (!progress || typeof progress !== "object") return defaultProgress();
+  progress.friends = normalizeUserIdArray(progress.friends);
+  progress.incomingFriendRequests = normalizeUserIdArray(progress.incomingFriendRequests);
+  progress.outgoingFriendRequests = normalizeUserIdArray(progress.outgoingFriendRequests);
+  return progress;
+}
+
+function normalizeUserIdArray(input) {
+  if (!Array.isArray(input)) return [];
+  return [...new Set(input.map((id) => String(id || "").trim()).filter(Boolean))];
+}
+
+function findUserById(id) {
+  return db.users.find((user) => user.id === String(id || "")) || null;
+}
+
+function acceptFriendRequestInternal(currentUserId, fromUserId) {
+  const current = findUserById(currentUserId);
+  const from = findUserById(fromUserId);
+  if (!current || !from) return false;
+  const currentProgress = ensureSocialProgressState(current.progress);
+  const fromProgress = ensureSocialProgressState(from.progress);
+
+  currentProgress.incomingFriendRequests = normalizeUserIdArray(currentProgress.incomingFriendRequests).filter((id) => id !== from.id);
+  fromProgress.outgoingFriendRequests = normalizeUserIdArray(fromProgress.outgoingFriendRequests).filter((id) => id !== current.id);
+  currentProgress.friends = normalizeUserIdArray([...currentProgress.friends, from.id]);
+  fromProgress.friends = normalizeUserIdArray([...fromProgress.friends, current.id]);
+  return true;
+}
+
+function declineFriendRequestInternal(currentUserId, fromUserId) {
+  const current = findUserById(currentUserId);
+  const from = findUserById(fromUserId);
+  if (!current || !from) return false;
+  const currentProgress = ensureSocialProgressState(current.progress);
+  const fromProgress = ensureSocialProgressState(from.progress);
+  currentProgress.incomingFriendRequests = normalizeUserIdArray(currentProgress.incomingFriendRequests).filter((id) => id !== from.id);
+  fromProgress.outgoingFriendRequests = normalizeUserIdArray(fromProgress.outgoingFriendRequests).filter((id) => id !== current.id);
+  return true;
+}
+
+function removeFriendInternal(aUserId, bUserId) {
+  const a = findUserById(aUserId);
+  const b = findUserById(bUserId);
+  if (!a || !b) return false;
+  const aProgress = ensureSocialProgressState(a.progress);
+  const bProgress = ensureSocialProgressState(b.progress);
+  aProgress.friends = normalizeUserIdArray(aProgress.friends).filter((id) => id !== b.id);
+  bProgress.friends = normalizeUserIdArray(bProgress.friends).filter((id) => id !== a.id);
+  aProgress.incomingFriendRequests = normalizeUserIdArray(aProgress.incomingFriendRequests).filter((id) => id !== b.id);
+  aProgress.outgoingFriendRequests = normalizeUserIdArray(aProgress.outgoingFriendRequests).filter((id) => id !== b.id);
+  bProgress.incomingFriendRequests = normalizeUserIdArray(bProgress.incomingFriendRequests).filter((id) => id !== a.id);
+  bProgress.outgoingFriendRequests = normalizeUserIdArray(bProgress.outgoingFriendRequests).filter((id) => id !== a.id);
+  return true;
+}
+
+function acceptTradeInternal(tradeId) {
+  const trade = (db.tradeRequests || []).find((entry) => entry.id === tradeId && entry.status === "pending");
+  const current = getCurrentUser();
+  if (!trade || !current || trade.toUserId !== current.id) return false;
+
+  const fromUser = findUserById(trade.fromUserId);
+  const toUser = findUserById(trade.toUserId);
+  if (!fromUser || !toUser) {
+    trade.status = "declined";
+    persistDb();
+    setSocialMessage("Trade failed: sender not found.", true);
+    return false;
+  }
+
+  const fromProgress = ensureSocialProgressState(fromUser.progress);
+  const toProgress = ensureSocialProgressState(toUser.progress);
+  const fromInventory = normalizeCollectionInventory(fromProgress.collectionInventory);
+  const fromItem = fromInventory.find((item) => item.id === String(trade.sourceItemId || ""));
+  if (!fromItem || fromItem.qty <= 0) {
+    trade.status = "declined";
+    persistDb();
+    setSocialMessage("Trade failed: sender no longer has that item.", true);
+    return false;
+  }
+
+  fromItem.qty -= 1;
+  fromProgress.collectionInventory = fromInventory.filter((item) => item.qty > 0);
+
+  const toInventory = normalizeCollectionInventory(toProgress.collectionInventory);
+  const incomingItem = normalizeCollectionInventory([
+    {
+      id: crypto.randomUUID(),
+      productId: trade.item?.productId || null,
+      title: trade.item?.title || "Item",
+      image: trade.item?.image || fallbackImageForTitle(trade.item?.title || "item"),
+      qty: 1,
+      valueEach: Number(trade.item?.valueEach) || 1,
+      rarity: normalizeRarity(trade.item?.rarity),
+      conditions: normalizeConditions(trade.item?.conditions)
+    }
+  ])[0];
+  const stackKey = collectionStackKey(incomingItem);
+  const existing = toInventory.find((item) => collectionStackKey(item) === stackKey);
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    toInventory.push(incomingItem);
+  }
+  toProgress.collectionInventory = normalizeCollectionInventory(toInventory);
+
+  trade.status = "accepted";
+  persistDb();
+  return true;
 }
 
 function renderTracking() {
@@ -828,7 +1210,9 @@ function renderStats() {
 }
 
 function handleCollectionAction(event) {
-  const target = event.target.closest(".collection-sell-btn");
+  const sellTarget = event.target.closest(".collection-sell-btn");
+  const tradeTarget = event.target.closest(".collection-trade-btn");
+  const target = sellTarget || tradeTarget;
   if (!target) return;
   const itemId = target.dataset.id;
   if (!itemId) return;
@@ -841,6 +1225,44 @@ function handleCollectionAction(event) {
   const inventory = normalizeCollectionInventory(nextProgress.collectionInventory);
   const item = inventory.find((entry) => entry.id === itemId);
   if (!item || item.qty <= 0) return;
+
+  if (tradeTarget) {
+    const toUserId = String(ui.tradeFriendSelect?.value || "");
+    if (!toUserId) {
+      setSocialMessage("Choose a friend in Trade Target first.", true);
+      return;
+    }
+    if (!normalizeUserIdArray(nextProgress.friends).includes(toUserId)) {
+      setSocialMessage("That user is not in your friends list.", true);
+      return;
+    }
+    const toUser = findUserById(toUserId);
+    if (!toUser) {
+      setSocialMessage("Friend account not found.", true);
+      return;
+    }
+    const trade = {
+      id: crypto.randomUUID(),
+      fromUserId: getCurrentUser().id,
+      toUserId,
+      sourceItemId: item.id,
+      item: {
+        productId: item.productId || null,
+        title: item.title,
+        image: item.image,
+        valueEach: item.valueEach,
+        rarity: item.rarity,
+        conditions: item.conditions
+      },
+      status: "pending",
+      createdAt: new Date().toISOString()
+    };
+    db.tradeRequests = [trade, ...(db.tradeRequests || [])].slice(0, 500);
+    persistDb();
+    setSocialMessage(`Trade offer sent to @${toUser.username}.`);
+    renderCollection();
+    return;
+  }
 
   if (item.rarity === "mythic" && Number(nextProgress.lastMythicSaleAt || 0) > Date.now() - MYTHIC_SELL_COOLDOWN_MS) {
     const waitMs = MYTHIC_SELL_COOLDOWN_MS - (Date.now() - Number(nextProgress.lastMythicSaleAt || 0));
@@ -1040,6 +1462,16 @@ async function checkout() {
     createdAt: new Date().toISOString(),
     shipping
   });
+
+  try {
+    for (const [id, qty] of Object.entries(nextProgress.cart)) {
+      for (let i = 0; i < qty; i += 1) {
+        await buyListing(id);
+      }
+    }
+  } catch (error) {
+    console.error("[Firestore] buyListing failed during checkout:", error);
+  }
 
   nextProgress.balance = round2(nextProgress.balance - totals.total);
   nextProgress.totalSpent = round2((Number(nextProgress.totalSpent) || 0) + totals.total);
@@ -1301,7 +1733,6 @@ async function handleAdminAdd(event) {
     const title = String(form.get("title") || "").trim();
     const category = String(form.get("category") || "").trim();
     const descriptionInput = String(form.get("description") || "").trim();
-    const rarity = normalizeRarity(form.get("rarity") || "common");
     const price = Number(form.get("price"));
     const stockInput = Number(form.get("stock"));
     const stock = Number.isFinite(stockInput) && stockInput >= 0 ? Math.floor(stockInput) : 50;
@@ -1334,14 +1765,16 @@ async function handleAdminAdd(event) {
       title: title.slice(0, 120),
       category: category.slice(0, 40),
       description: description.slice(0, 500),
-      rarity,
+      rarity: "common",
       price: round2(price),
       rating: round2(safeRating),
       stock,
       shippingTime,
       imageUrl: image,
       is21plus: ageRestricted,
-      createdBy: getCurrentUser()?.username || "ronin"
+      createdBy: getCurrentUser()?.id || "ronin",
+      createdByName: getCurrentUser()?.username || "ronin",
+      status: "active"
     };
 
     const savedListing = await addListing(listingPayload);
@@ -1482,9 +1915,7 @@ async function initializeGlobalListingSync() {
   try {
     await initFirebase();
     const initial = await getListings();
-    if (initial.length) {
-      applyIncomingListings(initial);
-    }
+    applyIncomingListings(initial);
     subscribeListings(applyIncomingListings);
     startListingsRefreshLoop();
   } catch (error) {
@@ -1508,9 +1939,7 @@ async function syncListingsNow() {
   if (!firestoreDb) return;
   try {
     const live = await getListings();
-    if (live.length) {
-      applyIncomingListings(live);
-    }
+    applyIncomingListings(live);
     if (!firestoreUnsubscribeListings) {
       subscribeListings(applyIncomingListings);
     }
@@ -1521,23 +1950,6 @@ async function syncListingsNow() {
 
 function applyIncomingListings(listings) {
   const normalized = normalizeCatalog(listings, [], false);
-  if (!normalized.length) {
-    const cached = readListingsCache();
-    if (cached.length) {
-      console.warn("[Firestore] Empty snapshot received; keeping cached listings fallback.");
-      db.catalog = cached;
-      setSyncStatusMessage(`Firestore returned empty; using cached ${cached.length} listing(s).`, true);
-      populateCategories();
-      renderProducts();
-      renderOrders();
-      renderListingPreview();
-      if (activeTab === "credits") {
-        renderCreditsShop();
-      }
-      return;
-    }
-  }
-
   db.catalog = normalized;
   console.log("[Firestore] Listings fetched:", db.catalog.length);
   cacheListingsLocal(db.catalog);
@@ -1590,18 +2002,12 @@ async function initFirebase() {
   if (!window.firebase?.initializeApp) {
     throw new Error("Firebase SDK not available.");
   }
-  const runtimeConfig = window.__MEGACART_FIREBASE_CONFIG__ || window.FIREBASE_CONFIG || {};
-  const mergedConfig = {
-    ...FIREBASE_CONFIG_DEFAULT,
-    ...FIREBASE_CONFIG,
-    ...runtimeConfig
-  };
-  const hasConfig = mergedConfig.apiKey && mergedConfig.apiKey !== "REPLACE_ME" && mergedConfig.projectId;
+  const hasConfig = firebaseConfig.apiKey && firebaseConfig.projectId;
   if (!hasConfig) {
-    throw new Error("Firebase config missing. Set window.__MEGACART_FIREBASE_CONFIG__ or window.FIREBASE_CONFIG.");
+    throw new Error("Firebase config missing. Fill firebaseConfig in app.js.");
   }
   if (!window.firebase.apps.length) {
-    window.firebase.initializeApp(mergedConfig);
+    window.firebase.initializeApp(firebaseConfig);
     console.log("[Firestore] Firebase initialized");
   }
   firestoreDb = window.firebase.firestore();
@@ -1615,6 +2021,7 @@ function subscribeListings(callback) {
   }
   firestoreUnsubscribeListings = firestoreDb
     .collection("listings")
+    .where("status", "==", "active")
     .onSnapshot(
       (snapshot) => {
         const listings = snapshot.docs
@@ -1689,8 +2096,9 @@ function mapFirestoreDocToListing(doc) {
     rarity: normalizeRarity(data.rarity || "common"),
     stock: Math.max(0, Math.floor(Number(data.stock) || 50)),
     shippingTime: String(data.shippingTime || "2-4 business days"),
-    ownerUsername: normalizeUsername(data.createdBy || "ronin") || "ronin",
+    ownerUsername: normalizeUsername(data.createdByName || data.createdBy || "ronin") || "ronin",
     isPublic: true,
+    status: String(data.status || "active"),
     description: String(data.description || "").slice(0, 500),
     reviews: [],
     createdAt: new Date(createdAtMs).toISOString()
@@ -1710,7 +2118,9 @@ async function addListing(listing) {
     shippingTime: String(listing.shippingTime || "2-4 business days").trim().slice(0, 50),
     is21plus: Boolean(listing.is21plus),
     createdBy: String(listing.createdBy || "ronin"),
-    createdAt: new Date()
+    createdByName: String(listing.createdByName || "ronin"),
+    status: String(listing.status || "active"),
+    createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
   };
   if (listing.imageUrl) payload.imageUrl = String(listing.imageUrl);
   if (listing.base64Image) payload.base64Image = String(listing.base64Image);
@@ -1731,11 +2141,108 @@ async function deleteListing(id) {
 
 async function getListings() {
   if (!firestoreDb) throw new Error("Firestore not initialized");
-  const snapshot = await firestoreDb.collection("listings").get();
+  const snapshot = await firestoreDb.collection("listings").where("status", "==", "active").get();
   const listings = snapshot.docs
     .map((doc) => mapFirestoreDocToListing(doc))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return listings;
+}
+
+async function createListing(input) {
+  return addListing(input);
+}
+
+async function fetchListings() {
+  return getListings();
+}
+
+async function buyListing(listingId) {
+  if (!firestoreDb) throw new Error("Firestore not initialized");
+  const buyer = getCurrentUser();
+  if (!buyer) throw new Error("Sign in required");
+
+  const listingRef = firestoreDb.collection("listings").doc(String(listingId));
+  const orderRef = firestoreDb.collection("orders").doc();
+  await firestoreDb.runTransaction(async (tx) => {
+    const listingSnap = await tx.get(listingRef);
+    if (!listingSnap.exists) {
+      throw new Error("Listing not found");
+    }
+    const listing = listingSnap.data() || {};
+    if (String(listing.status || "active") !== "active") {
+      throw new Error("Listing already sold");
+    }
+
+    tx.set(orderRef, {
+      listingId: String(listingId),
+      buyerUid: String(buyer.id),
+      buyerEmail: null,
+      priceAtPurchase: round2(Number(listing.price) || 0),
+      createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+      status: "created"
+    });
+    tx.update(listingRef, { status: "sold" });
+  });
+
+  return orderRef.id;
+}
+
+async function fetchOrdersForUser(uid = getCurrentUser()?.id) {
+  if (!firestoreDb || !uid) return [];
+  const snapshot = await firestoreDb.collection("orders").where("buyerUid", "==", String(uid)).get();
+  return snapshot.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .sort((a, b) => {
+      const aTs = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+      const bTs = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+      return bTs - aTs;
+    })
+    .map((item) => ({
+      ...item,
+      createdAt: item.createdAt?.toDate ? item.createdAt.toDate().toISOString() : new Date().toISOString()
+    }));
+}
+
+async function fetchAllOrdersForAdmin() {
+  if (!firestoreDb) return [];
+  if (!isAdminUser(getCurrentUser())) throw new Error("Admin only");
+  const snapshot = await firestoreDb.collection("orders").get();
+  return snapshot.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .sort((a, b) => {
+      const aTs = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+      const bTs = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+      return bTs - aTs;
+    })
+    .map((item) => ({
+      ...item,
+      createdAt: item.createdAt?.toDate ? item.createdAt.toDate().toISOString() : new Date().toISOString()
+    }));
+}
+
+async function syncUserOrdersFromFirestore() {
+  const progress = getProgressOrNull();
+  const user = getCurrentUser();
+  if (!progress || !user) return;
+  const orders = await fetchOrdersForUser(user.id);
+  progress.firestoreOrders = orders.map((order) => ({
+    id: `fs-${order.id}`,
+    itemCount: 1,
+    total: round2(Number(order.priceAtPurchase) || 0),
+    products: [`Listing ${order.listingId}`],
+    lineItems: [],
+    createdAt: order.createdAt,
+    shipping: {
+      carrier: "MegaCart",
+      service: "Digital",
+      trackingId: order.id,
+      etaTs: new Date(order.createdAt || Date.now()).getTime(),
+      destination: "Account inventory",
+      status: order.status === "cancelled" ? "Cancelled" : "Delivered"
+    }
+  }));
+  persistDb();
+  renderOrders();
 }
 
 async function handleSignup(event) {
@@ -1893,6 +2400,10 @@ function defaultProgress() {
     lastMythicSaleAt: null,
     cart: {},
     orders: [],
+    firestoreOrders: [],
+    friends: [],
+    incomingFriendRequests: [],
+    outgoingFriendRequests: [],
     search: "",
     category: "all",
     sort: "featured"
@@ -1947,7 +2458,8 @@ function loadDb() {
         users: [],
         currentUserId: null,
         deletedCatalogIds: [],
-        catalog: SEED_PRODUCTS.map((item) => ({ ...item }))
+        catalog: SEED_PRODUCTS.map((item) => ({ ...item })),
+        tradeRequests: []
       };
     }
 
@@ -1966,19 +2478,22 @@ function loadDb() {
       : [];
 
     const validIds = new Set(users.map((user) => user.id));
+    const tradeRequests = normalizeTradeRequests(parsed.tradeRequests, validIds);
 
     return {
       users,
       currentUserId: validIds.has(parsed.currentUserId) ? parsed.currentUserId : null,
       deletedCatalogIds,
-      catalog
+      catalog,
+      tradeRequests
     };
   } catch {
     return {
       users: [],
       currentUserId: null,
       deletedCatalogIds: [],
-      catalog: SEED_PRODUCTS.map((item) => ({ ...item }))
+      catalog: SEED_PRODUCTS.map((item) => ({ ...item })),
+      tradeRequests: []
     };
   }
 }
@@ -2008,6 +2523,7 @@ function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefault
     const image = String(item.image || "").trim() || fallbackImageForTitle(title);
     const ownerUsername = normalizeUsername(item.ownerUsername || "ronin") || "ronin";
     const isPublic = true;
+    const status = ["active", "sold", "archived"].includes(String(item.status || "active")) ? String(item.status || "active") : "active";
     const ageRestricted = item.ageRestricted === true;
     const rarity = normalizeRarity(item.rarity || "common");
     const parsedStock = Number(item.stock);
@@ -2032,6 +2548,7 @@ function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefault
       image,
       ownerUsername,
       isPublic,
+      status,
       ageRestricted,
       rarity,
       stock,
@@ -2043,6 +2560,30 @@ function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefault
   }
 
   return normalized;
+}
+
+function normalizeTradeRequests(input, validUserIds = new Set()) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((trade) => ({
+      id: String(trade?.id || crypto.randomUUID()),
+      fromUserId: String(trade?.fromUserId || ""),
+      toUserId: String(trade?.toUserId || ""),
+      sourceItemId: String(trade?.sourceItemId || ""),
+      item: {
+        productId: trade?.item?.productId ? String(trade.item.productId) : null,
+        title: String(trade?.item?.title || "Item"),
+        image: String(trade?.item?.image || fallbackImageForTitle(trade?.item?.title || "item")),
+        valueEach: round2(Math.max(0.01, Number(trade?.item?.valueEach) || 1)),
+        rarity: normalizeRarity(trade?.item?.rarity),
+        conditions: normalizeConditions(trade?.item?.conditions)
+      },
+      status: ["pending", "accepted", "declined"].includes(String(trade?.status || "pending"))
+        ? String(trade.status)
+        : "pending",
+      createdAt: trade?.createdAt || new Date().toISOString()
+    }))
+    .filter((trade) => validUserIds.has(trade.fromUserId) && validUserIds.has(trade.toUserId));
 }
 
 function normalizeReviews(input) {
@@ -2268,6 +2809,10 @@ function normalizeProgress(progress, catalog) {
     lastMythicSaleAt: Number(progress.lastMythicSaleAt) > 0 ? Number(progress.lastMythicSaleAt) : null,
     cart,
     orders: Array.isArray(progress.orders) ? progress.orders.slice(0, 50) : [],
+    firestoreOrders: Array.isArray(progress.firestoreOrders) ? progress.firestoreOrders.slice(0, 100) : [],
+    friends: normalizeUserIdArray(progress.friends),
+    incomingFriendRequests: normalizeUserIdArray(progress.incomingFriendRequests),
+    outgoingFriendRequests: normalizeUserIdArray(progress.outgoingFriendRequests),
     search: String(progress.search || ""),
     category: categories.includes(progress.category) ? progress.category : "all",
     sort: ["featured", "price-low", "price-high", "rating"].includes(progress.sort) ? progress.sort : "featured"
