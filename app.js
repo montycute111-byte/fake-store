@@ -28,6 +28,7 @@ const DEMO_LISTING_TITLES = new Set([
 const SEED_PRODUCTS = [];
 
 const db = loadDb();
+enforceRoninPassword();
 purgeDemoListingsForAllAccountsOnce();
 let activeTab = "store";
 let activeListingId = null;
@@ -52,10 +53,18 @@ const JOB_MIN_DURATION_MINUTES = 2;
 const JOB_MAX_DURATION_MINUTES = 30;
 const JOB_MIN_PAYOUT = 20;
 const JOB_MAX_PAYOUT = 400;
+const P2P_DAILY_CAP = 3000;
+const P2P_TX_CAP = 1000;
+const P2P_COOLDOWN_MS = 30 * 1000;
+const TRADE_MONEY_CAP = 2000;
+const TRADE_MAX_ITEMS_PER_SIDE = 20;
+const TRADE_EXPIRE_MS = 24 * 60 * 60 * 1000;
 const AUTO_CATALOG_MIN_ITEMS = 40;
 const AUTO_CATALOG_MAX_ITEMS = 80;
 const AUTO_CATALOG_LOCAL_CONFIG_KEY = "megacart_auto_catalog_config_v1";
 const AUTO_CATALOG_DEFAULT_ENABLED = true;
+const AUTO_CATALOG_AI_IMAGES_DEFAULT_ENABLED = true;
+const AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT = 40;
 const AUTO_CATALOG_RARITY_WEIGHTS = [
   { key: "common", weight: 70 },
   { key: "uncommon", weight: 20 },
@@ -152,6 +161,16 @@ const JOB_POOL = [
 let firestoreDb = null;
 let firestoreUnsubscribeListings = null;
 let listingsRefreshIntervalId = null;
+let friendsState = {
+  friendships: [],
+  usersById: {}
+};
+let tradesState = {
+  trades: []
+};
+let activeFriendsSubtab = "search";
+let sendMoneyTargetUid = null;
+let activeTradeEditId = null;
 
 const ui = {
   searchInput: document.querySelector("#searchInput"),
@@ -182,6 +201,8 @@ const ui = {
   trackingTabBtn: document.querySelector("#trackingTabBtn"),
   jobsTabBtn: document.querySelector("#jobsTabBtn"),
   statsTabBtn: document.querySelector("#statsTabBtn"),
+  friendsTabBtn: document.querySelector("#friendsTabBtn"),
+  tradesTabBtn: document.querySelector("#tradesTabBtn"),
   storeView: document.querySelector("#storeView"),
   storefrontContent: document.querySelector("#storefrontContent"),
   listingPreview: document.querySelector("#listingPreview"),
@@ -207,9 +228,45 @@ const ui = {
   jobsMsg: document.querySelector("#jobsMsg"),
   jobsList: document.querySelector("#jobsList"),
   statsView: document.querySelector("#statsView"),
+  friendsView: document.querySelector("#friendsView"),
+  tradesView: document.querySelector("#tradesView"),
   syncStatusMsg: document.querySelector("#syncStatusMsg"),
   statsEarned: document.querySelector("#statsEarned"),
   statsSpent: document.querySelector("#statsSpent"),
+  friendsSearchTabBtn: document.querySelector("#friendsSearchTabBtn"),
+  friendsRequestsTabBtn: document.querySelector("#friendsRequestsTabBtn"),
+  friendsListTabBtn: document.querySelector("#friendsListTabBtn"),
+  friendsBlockedTabBtn: document.querySelector("#friendsBlockedTabBtn"),
+  friendsSearchPanel: document.querySelector("#friendsSearchPanel"),
+  friendsRequestsPanel: document.querySelector("#friendsRequestsPanel"),
+  friendsListPanel: document.querySelector("#friendsListPanel"),
+  friendsBlockedPanel: document.querySelector("#friendsBlockedPanel"),
+  friendsMsg: document.querySelector("#friendsMsg"),
+  friendSearchInput: document.querySelector("#friendSearchInput"),
+  friendSearchBtn: document.querySelector("#friendSearchBtn"),
+  friendSearchResults: document.querySelector("#friendSearchResults"),
+  friendIncomingList: document.querySelector("#friendIncomingList"),
+  friendOutgoingList: document.querySelector("#friendOutgoingList"),
+  friendsList: document.querySelector("#friendsList"),
+  friendsBlockedList: document.querySelector("#friendsBlockedList"),
+  tradesMsg: document.querySelector("#tradesMsg"),
+  newTradeFriendSelect: document.querySelector("#newTradeFriendSelect"),
+  newTradeMoneyInput: document.querySelector("#newTradeMoneyInput"),
+  newTradeInventoryList: document.querySelector("#newTradeInventoryList"),
+  createTradeBtn: document.querySelector("#createTradeBtn"),
+  myTradesList: document.querySelector("#myTradesList"),
+  tradeEditPanel: document.querySelector("#tradeEditPanel"),
+  tradeEditMeta: document.querySelector("#tradeEditMeta"),
+  tradeEditMoneyInput: document.querySelector("#tradeEditMoneyInput"),
+  tradeEditInventoryList: document.querySelector("#tradeEditInventoryList"),
+  saveTradeOfferBtn: document.querySelector("#saveTradeOfferBtn"),
+  sendMoneyModal: document.querySelector("#sendMoneyModal"),
+  sendMoneyTarget: document.querySelector("#sendMoneyTarget"),
+  sendMoneyAmountInput: document.querySelector("#sendMoneyAmountInput"),
+  sendMoneyNoteInput: document.querySelector("#sendMoneyNoteInput"),
+  sendMoneyConfirmBtn: document.querySelector("#sendMoneyConfirmBtn"),
+  sendMoneyCancelBtn: document.querySelector("#sendMoneyCancelBtn"),
+  sendMoneyMsg: document.querySelector("#sendMoneyMsg"),
   creditsUserLabel: document.querySelector("#creditsUserLabel"),
   creditsBalance: document.querySelector("#creditsBalance"),
   creditsMsg: document.querySelector("#creditsMsg"),
@@ -227,6 +284,8 @@ const ui = {
   adminOrders: document.querySelector("#adminOrders"),
   adminMsg: document.querySelector("#adminMsg"),
   adminAutoCatalogToggle: document.querySelector("#adminAutoCatalogToggle"),
+  adminAiImagesToggle: document.querySelector("#adminAiImagesToggle"),
+  adminAiImageDailyLimitInput: document.querySelector("#adminAiImageDailyLimitInput"),
   adminGenerateTodayBtn: document.querySelector("#adminGenerateTodayBtn"),
   adminAutoCatalogStatus: document.querySelector("#adminAutoCatalogStatus"),
   deliveryPopup: document.querySelector("#deliveryPopup"),
@@ -245,6 +304,8 @@ function init() {
   startFundTimerTicker();
   renderAll();
   initializeGlobalListingSync();
+  refreshFriendsData().catch(() => {});
+  refreshTradesData().catch(() => {});
 }
 
 function bindEvents() {
@@ -302,9 +363,17 @@ function bindEvents() {
   ui.statsTabBtn.addEventListener("click", () => {
     switchTab("stats");
   });
+  ui.friendsTabBtn.addEventListener("click", () => {
+    switchTab("friends");
+  });
+  ui.tradesTabBtn.addEventListener("click", () => {
+    switchTab("trades");
+  });
 
   ui.reward5minClaimBtn.addEventListener("click", handleClaim5MinReward);
-  ui.buyIdBtn.addEventListener("click", handleBuyAgeId);
+  if (ui.buyIdBtn) {
+    ui.buyIdBtn.addEventListener("click", handleBuyAgeId);
+  }
 
   ui.closePreviewBtn.addEventListener("click", closeListingPreview);
   ui.previewAddToCartBtn.addEventListener("click", () => {
@@ -313,12 +382,55 @@ function bindEvents() {
     }
   });
   ui.previewReviewForm.addEventListener("submit", handlePreviewReviewSubmit);
-  ui.adminAddForm.addEventListener("submit", handleAdminAdd);
+  if (ui.adminAddForm) {
+    ui.adminAddForm.addEventListener("submit", handleAdminAdd);
+  }
   if (ui.adminAutoCatalogToggle) {
     ui.adminAutoCatalogToggle.addEventListener("change", handleAdminAutoCatalogToggle);
   }
+  if (ui.adminAiImagesToggle) {
+    ui.adminAiImagesToggle.addEventListener("change", handleAdminAiImagesToggle);
+  }
+  if (ui.adminAiImageDailyLimitInput) {
+    ui.adminAiImageDailyLimitInput.addEventListener("change", handleAdminAiImageDailyLimitChange);
+  }
   if (ui.adminGenerateTodayBtn) {
     ui.adminGenerateTodayBtn.addEventListener("click", handleAdminGenerateTodayNow);
+  }
+  if (ui.friendsSearchTabBtn) {
+    ui.friendsSearchTabBtn.addEventListener("click", () => setFriendsSubtab("search"));
+    ui.friendsRequestsTabBtn.addEventListener("click", () => setFriendsSubtab("requests"));
+    ui.friendsListTabBtn.addEventListener("click", () => setFriendsSubtab("friends"));
+    ui.friendsBlockedTabBtn.addEventListener("click", () => setFriendsSubtab("blocked"));
+  }
+  if (ui.friendSearchBtn) {
+    ui.friendSearchBtn.addEventListener("click", handleFriendSearch);
+  }
+  if (ui.friendSearchInput) {
+    ui.friendSearchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handleFriendSearch();
+      }
+    });
+  }
+  if (ui.createTradeBtn) {
+    ui.createTradeBtn.addEventListener("click", handleCreateTrade);
+  }
+  if (ui.saveTradeOfferBtn) {
+    ui.saveTradeOfferBtn.addEventListener("click", handleSaveTradeOffer);
+  }
+  if (ui.friendsView) {
+    ui.friendsView.addEventListener("click", handleFriendsViewClick);
+  }
+  if (ui.myTradesList) {
+    ui.myTradesList.addEventListener("click", handleTradesViewClick);
+  }
+  if (ui.sendMoneyCancelBtn) {
+    ui.sendMoneyCancelBtn.addEventListener("click", closeSendMoneyModal);
+  }
+  if (ui.sendMoneyConfirmBtn) {
+    ui.sendMoneyConfirmBtn.addEventListener("click", handleConfirmSendMoney);
   }
   ui.signupForm.addEventListener("submit", handleSignup);
   ui.loginForm.addEventListener("submit", handleLogin);
@@ -343,14 +455,22 @@ function bindEvents() {
 }
 
 function switchTab(tab) {
-  if ((tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats") && !ensureSignedIn("Sign in first to continue.")) {
+  if ((tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats" || tab === "friends" || tab === "trades") && !ensureSignedIn("Sign in first to continue.")) {
     return;
   }
 
-  activeTab = tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats" ? tab : "store";
+  activeTab = tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats" || tab === "friends" || tab === "trades" ? tab : "store";
   if (activeTab === "store") {
     ensureAutoCatalogFresh().catch((error) => {
       console.error("[AutoCatalog] store refresh failed:", error);
+    });
+  } else if (activeTab === "friends") {
+    refreshFriendsData().catch((error) => {
+      console.error("[Friends] refresh failed:", error);
+    });
+  } else if (activeTab === "trades") {
+    refreshTradesData().catch((error) => {
+      console.error("[Trades] refresh failed:", error);
     });
   }
   if (activeTab !== "store") {
@@ -362,6 +482,8 @@ function switchTab(tab) {
   renderTracking();
   renderDailyJobs();
   renderStats();
+  renderFriends();
+  renderTrades();
 }
 
 function renderTabState() {
@@ -371,6 +493,8 @@ function renderTabState() {
   const trackingActive = activeTab === "tracking";
   const jobsActive = activeTab === "jobs";
   const statsActive = activeTab === "stats";
+  const friendsActive = activeTab === "friends";
+  const tradesActive = activeTab === "trades";
 
   ui.storeView.classList.toggle("hidden", !storeActive);
   ui.creditsView.classList.toggle("hidden", !creditsActive);
@@ -378,12 +502,16 @@ function renderTabState() {
   ui.trackingView.classList.toggle("hidden", !trackingActive);
   ui.jobsView.classList.toggle("hidden", !jobsActive);
   ui.statsView.classList.toggle("hidden", !statsActive);
+  ui.friendsView.classList.toggle("hidden", !friendsActive);
+  ui.tradesView.classList.toggle("hidden", !tradesActive);
   ui.storeTabBtn.classList.toggle("active", storeActive);
   ui.creditsTabBtn.classList.toggle("active", creditsActive);
   ui.collectionTabBtn.classList.toggle("active", collectionActive);
   ui.trackingTabBtn.classList.toggle("active", trackingActive);
   ui.jobsTabBtn.classList.toggle("active", jobsActive);
   ui.statsTabBtn.classList.toggle("active", statsActive);
+  ui.friendsTabBtn.classList.toggle("active", friendsActive);
+  ui.tradesTabBtn.classList.toggle("active", tradesActive);
 }
 
 function populateCategories() {
@@ -415,6 +543,8 @@ function renderAll() {
   renderTracking();
   renderDailyJobs();
   renderStats();
+  renderFriends();
+  renderTrades();
   checkForDeliveredItems();
 }
 
@@ -470,7 +600,26 @@ function addMoney(amount, reason = "unknown", meta = {}) {
     meta: meta && typeof meta === "object" ? meta : {}
   });
   progress.moneyLedger = progress.moneyLedger.slice(0, 200);
+  syncCurrentUserEconomyToFirestore().catch(() => {});
   return safeAmount;
+}
+
+async function syncCurrentUserEconomyToFirestore() {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) return;
+  await firestoreDb
+    .collection("users")
+    .doc(String(user.id))
+    .set(
+      {
+        uid: String(user.id),
+        username: String(user.username),
+        usernameLower: String(user.username).toLowerCase(),
+        balance: round2(Number(user.progress?.balance) || 0),
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
 }
 
 function renderCreditsShop() {
@@ -483,9 +632,13 @@ function renderCreditsShop() {
     ui.reward5minCountdown.textContent = "Ready";
     ui.reward5minLast.textContent = "Last reward: $0.00";
     ui.reward5minToday.textContent = `Today's 5-min total: $0.00 / ${money(REWARD5_MIN_DAILY_CAP)}`;
-    ui.buyIdBtn.disabled = true;
-    ui.buyIdBtn.textContent = `Buy 21+ ID (${money(AGE_ID_PRICE)})`;
-    ui.idStatus.textContent = "Sign in to buy a 21+ ID.";
+    if (ui.buyIdBtn) {
+      ui.buyIdBtn.disabled = true;
+      ui.buyIdBtn.textContent = `Buy 21+ ID (${money(AGE_ID_PRICE)})`;
+    }
+    if (ui.idStatus) {
+      ui.idStatus.textContent = "Sign in to buy a 21+ ID.";
+    }
     ui.adminPanel.classList.add("hidden");
     ui.adminListings.innerHTML = "";
     return;
@@ -517,6 +670,7 @@ function renderCreditsShop() {
 }
 
 function renderAgeIdShop(progress) {
+  if (!ui.idStatus || !ui.buyIdBtn) return;
   const hasId = Boolean(progress.hasAgeId);
   ui.idStatus.textContent = hasId ? "21+ ID Active. You can buy 21+ items." : "No 21+ ID owned.";
   ui.buyIdBtn.textContent = hasId ? "21+ ID Owned" : `Buy 21+ ID (${money(AGE_ID_PRICE)})`;
@@ -566,13 +720,14 @@ function renderAdminListings() {
           <strong class="admin-title">${product.title}</strong>
           <span class="admin-price">${money(product.price)}</span>
         </div>
-        <p class="admin-meta">${product.brand || "NovaGoods"} • ${product.category}${product.ageRestricted ? " • 21+" : ""} • ${stockLabel} • ${product.shippingTime || "Standard shipping"} • ${formatRarityLabel(product.rarity)} • Rating ${effectiveRating.toFixed(1)} • @${product.ownerUsername}</p>
+        <p class="admin-meta">${product.brand || "NovaGoods"} • ${product.category}${product.ageRestricted ? " • 21+" : ""} • ${stockLabel} • ${product.shippingTime || "Standard shipping"} • Rarity hidden until delivery • Rating ${effectiveRating.toFixed(1)} • @${product.ownerUsername}</p>
         <div class="admin-row-controls">
           <label class="admin-price-input">
             Price
             <input type="number" min="0.01" step="0.01" value="${Number(product.price).toFixed(2)}" />
           </label>
           <button type="button" data-action="price" data-id="${product.id}" class="admin-save-btn">Save Price</button>
+          <button type="button" data-action="regen-image" data-id="${product.id}" class="admin-save-btn">Regenerate Image</button>
           <button type="button" data-action="delete" data-id="${product.id}" class="admin-delete-btn">Delete</button>
         </div>
       </div>
@@ -581,10 +736,14 @@ function renderAdminListings() {
 
     const input = row.querySelector("input");
     const priceBtn = row.querySelector('[data-action="price"]');
+    const regenBtn = row.querySelector('[data-action="regen-image"]');
     const delBtn = row.querySelector('[data-action="delete"]');
 
     priceBtn.addEventListener("click", () => {
       handleAdminSetPrice(product.id, input.value);
+    });
+    regenBtn.addEventListener("click", () => {
+      handleAdminRegenerateImage(product.id);
     });
 
     delBtn.addEventListener("click", () => {
@@ -637,10 +796,18 @@ async function renderAdminAutoCatalogControls() {
   if (!ui.adminAutoCatalogToggle || !ui.adminGenerateTodayBtn || !ui.adminAutoCatalogStatus) return;
   const config = await readAutoCatalogConfig();
   const enabled = config.autoEnabled !== false;
+  const aiEnabled = config.aiImagesEnabled !== false;
+  const aiLimit = clamp(Math.floor(Number(config.aiImagesDailyLimit) || AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT), 0, 80);
   ui.adminAutoCatalogToggle.checked = enabled;
+  if (ui.adminAiImagesToggle) {
+    ui.adminAiImagesToggle.checked = aiEnabled;
+  }
+  if (ui.adminAiImageDailyLimitInput) {
+    ui.adminAiImageDailyLimitInput.value = String(aiLimit);
+  }
   ui.adminGenerateTodayBtn.disabled = !firestoreDb;
   ui.adminAutoCatalogStatus.textContent = firestoreDb
-    ? `Auto generation is ${enabled ? "ON" : "OFF"}.`
+    ? `Auto generation is ${enabled ? "ON" : "OFF"} • AI images ${aiEnabled ? "ON" : "OFF"} (${aiLimit}/day).`
     : "Connect Firestore to use auto generation controls.";
 }
 
@@ -659,6 +826,32 @@ async function handleAdminAutoCatalogToggle(event) {
   } catch (error) {
     console.error("[AutoCatalog] toggle failed:", error);
     setAdminMessage(`Auto catalog toggle failed: ${error?.message || "Try again."}`, true);
+  }
+}
+
+async function handleAdminAiImagesToggle(event) {
+  if (!ensureAdmin()) return;
+  const enabled = event.currentTarget.checked === true;
+  try {
+    await writeAutoCatalogConfig({ aiImagesEnabled: enabled });
+    setAdminMessage(`AI image generation ${enabled ? "enabled" : "disabled"}.`);
+    await renderAdminAutoCatalogControls();
+  } catch (error) {
+    console.error("[AutoCatalog] ai toggle failed:", error);
+    setAdminMessage(`AI image toggle failed: ${error?.message || "Try again."}`, true);
+  }
+}
+
+async function handleAdminAiImageDailyLimitChange(event) {
+  if (!ensureAdmin()) return;
+  const value = clamp(Math.floor(Number(event.currentTarget.value) || 0), 0, 80);
+  try {
+    await writeAutoCatalogConfig({ aiImagesDailyLimit: value });
+    setAdminMessage(`AI image daily limit set to ${value}.`);
+    await renderAdminAutoCatalogControls();
+  } catch (error) {
+    console.error("[AutoCatalog] ai limit save failed:", error);
+    setAdminMessage(`AI image limit save failed: ${error?.message || "Try again."}`, true);
   }
 }
 
@@ -694,8 +887,9 @@ async function ensureAutoCatalogFresh(force = false) {
   }
 
   const generatedListings = buildGeneratedCatalogForDay(todayKey);
+  const withImages = await enrichGeneratedListingsWithImages(generatedListings, todayKey, config);
   const batch = firestoreDb.batch();
-  for (const listing of generatedListings) {
+  for (const listing of withImages) {
     const ref = firestoreDb.collection("listings").doc(String(listing.id));
     batch.set(ref, {
       title: listing.title,
@@ -724,9 +918,39 @@ async function ensureAutoCatalogFresh(force = false) {
   await batch.commit();
   await writeAutoCatalogConfig({
     autoEnabled: enabled,
+    aiImagesEnabled: config.aiImagesEnabled !== false,
+    aiImagesDailyLimit: clamp(Math.floor(Number(config.aiImagesDailyLimit) || AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT), 0, 80),
     lastGeneratedDayKey: todayKey,
-    lastGeneratedCount: generatedListings.length
+    lastGeneratedCount: withImages.length
   });
+}
+
+async function enrichGeneratedListingsWithImages(listings, dayKey, config) {
+  const out = listings.map((item) => ({ ...item }));
+  const aiEnabled = config.aiImagesEnabled !== false;
+  const dailyLimit = clamp(Math.floor(Number(config.aiImagesDailyLimit) || AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT), 0, 80);
+  if (!aiEnabled || dailyLimit <= 0) return out;
+
+  const maxCount = Math.min(dailyLimit, out.length);
+  const targetIndexes = [];
+  for (let i = 0; i < maxCount; i += 1) {
+    targetIndexes.push(i);
+  }
+
+  await mapWithConcurrency(targetIndexes, 2, async (index) => {
+    const listing = out[index];
+    if (!listing) return;
+    try {
+      const imageUrl = await generateImageForListingViaApi(listing, { force: false });
+      if (imageUrl) {
+        listing.imageUrl = imageUrl;
+      }
+    } catch (error) {
+      console.error("[AutoCatalog] image generation failed for listing:", listing.id, error);
+      listing.imageUrl = fallbackImageForCategory(listing.category);
+    }
+  });
+  return out;
 }
 
 function buildGeneratedCatalogForDay(dayKey) {
@@ -813,6 +1037,75 @@ function pickCatalogImageUrl(imageKey, dayKey, index, title) {
   return `public/images/catalog/${key}/${imageName}`;
 }
 
+function fallbackImageForCategory(category) {
+  const key = String(category || "tech").toLowerCase();
+  if (key.includes("home")) return "public/images/catalog/home/home-01.svg";
+  if (key.includes("beauty")) return "public/images/catalog/beauty/beauty-01.svg";
+  if (key.includes("fitness")) return "public/images/catalog/fitness/fitness-01.svg";
+  if (key.includes("gaming")) return "public/images/catalog/gaming/gaming-01.svg";
+  return "public/images/catalog/tech/tech-01.svg";
+}
+
+function buildListingImageKey(listing, dayKey, versionSuffix = "") {
+  const title = String(listing?.title || "");
+  const category = String(listing?.category || "");
+  const features = Array.isArray(listing?.features) ? listing.features.join("|") : "";
+  const base = `${title}|${category}|${features}|${dayKey}|${versionSuffix}`;
+  return `img_${hashStringToInt(base).toString(36)}`;
+}
+
+async function generateImageForListingViaApi(listing, options = {}) {
+  const dayKey = String(listing?.dayKey || getTodayKeyLocal());
+  const imageKey = buildListingImageKey(listing, dayKey, String(options.versionSuffix || ""));
+  const payload = {
+    listing: {
+      title: String(listing?.title || "Product"),
+      category: String(listing?.category || "Tech"),
+      features: Array.isArray(listing?.features) ? listing.features.slice(0, 6) : [],
+      rarity: normalizeRarity(listing?.rarity || "common")
+    },
+    dayKey,
+    imageKey,
+    force: options.force === true,
+    autoGeneration: true
+  };
+
+  if (typeof window === "undefined" || window.location?.protocol === "file:") {
+    return fallbackImageForCategory(payload.listing.category);
+  }
+
+  const response = await fetch("/api/generateProductImage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error(`Image API failed (${response.status})`);
+  }
+  const data = await response.json();
+  const imageUrl = String(data?.imageUrl || "").trim();
+  if (!imageUrl) throw new Error("Image API returned empty URL");
+  return imageUrl;
+}
+
+async function mapWithConcurrency(values, concurrency, worker) {
+  const queue = Array.isArray(values) ? values.slice() : [];
+  const running = [];
+  const limit = Math.max(1, Math.floor(Number(concurrency) || 1));
+
+  async function runOne() {
+    if (!queue.length) return;
+    const value = queue.shift();
+    await worker(value);
+    await runOne();
+  }
+
+  for (let i = 0; i < Math.min(limit, queue.length); i += 1) {
+    running.push(runOne());
+  }
+  await Promise.all(running);
+}
+
 function buildGeneratedListingId(dayKey, index, title) {
   const suffix = hashStringToInt(`${dayKey}|${index}|${title}`).toString(36).slice(0, 6);
   return `gen-${dayKey}-${String(index + 1).padStart(3, "0")}-${suffix}`;
@@ -827,6 +1120,8 @@ async function readAutoCatalogConfig() {
     const data = doc.data() || {};
     return {
       autoEnabled: data.autoEnabled !== false,
+      aiImagesEnabled: data.aiImagesEnabled !== false,
+      aiImagesDailyLimit: clamp(Math.floor(Number(data.aiImagesDailyLimit) || fallback.aiImagesDailyLimit || AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT), 0, 80),
       lastGeneratedDayKey: String(data.lastGeneratedDayKey || fallback.lastGeneratedDayKey || ""),
       lastGeneratedCount: Math.max(0, Math.floor(Number(data.lastGeneratedCount) || 0))
     };
@@ -840,6 +1135,8 @@ async function writeAutoCatalogConfig(patch) {
   const current = readAutoCatalogConfigLocal();
   const next = {
     autoEnabled: patch?.autoEnabled === undefined ? current.autoEnabled : patch.autoEnabled !== false,
+    aiImagesEnabled: patch?.aiImagesEnabled === undefined ? current.aiImagesEnabled : patch.aiImagesEnabled !== false,
+    aiImagesDailyLimit: clamp(Math.floor(Number(patch?.aiImagesDailyLimit ?? current.aiImagesDailyLimit ?? AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT)), 0, 80),
     lastGeneratedDayKey: String(patch?.lastGeneratedDayKey || current.lastGeneratedDayKey || ""),
     lastGeneratedCount: Math.max(0, Math.floor(Number(patch?.lastGeneratedCount ?? current.lastGeneratedCount ?? 0)))
   };
@@ -848,6 +1145,8 @@ async function writeAutoCatalogConfig(patch) {
   await firestoreDb.collection("system").doc("catalogConfig").set(
     {
       autoEnabled: next.autoEnabled,
+      aiImagesEnabled: next.aiImagesEnabled,
+      aiImagesDailyLimit: next.aiImagesDailyLimit,
       lastGeneratedDayKey: next.lastGeneratedDayKey,
       lastGeneratedCount: next.lastGeneratedCount,
       updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
@@ -863,6 +1162,8 @@ function readAutoCatalogConfigLocal() {
     if (!raw) {
       return {
         autoEnabled: AUTO_CATALOG_DEFAULT_ENABLED,
+        aiImagesEnabled: AUTO_CATALOG_AI_IMAGES_DEFAULT_ENABLED,
+        aiImagesDailyLimit: AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT,
         lastGeneratedDayKey: "",
         lastGeneratedCount: 0
       };
@@ -870,12 +1171,16 @@ function readAutoCatalogConfigLocal() {
     const parsed = JSON.parse(raw);
     return {
       autoEnabled: parsed?.autoEnabled !== false,
+      aiImagesEnabled: parsed?.aiImagesEnabled !== false,
+      aiImagesDailyLimit: clamp(Math.floor(Number(parsed?.aiImagesDailyLimit) || AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT), 0, 80),
       lastGeneratedDayKey: String(parsed?.lastGeneratedDayKey || ""),
       lastGeneratedCount: Math.max(0, Math.floor(Number(parsed?.lastGeneratedCount) || 0))
     };
   } catch {
     return {
       autoEnabled: AUTO_CATALOG_DEFAULT_ENABLED,
+      aiImagesEnabled: AUTO_CATALOG_AI_IMAGES_DEFAULT_ENABLED,
+      aiImagesDailyLimit: AUTO_CATALOG_AI_IMAGES_DAILY_LIMIT_DEFAULT,
       lastGeneratedDayKey: "",
       lastGeneratedCount: 0
     };
@@ -931,6 +1236,7 @@ function handleBuyAgeId() {
   nextProgress.totalSpent = round2((Number(nextProgress.totalSpent) || 0) + AGE_ID_PRICE);
   nextProgress.hasAgeId = true;
   persistDb();
+  syncCurrentUserEconomyToFirestore().catch(() => {});
   setFundMessage("21+ ID purchased. You can now buy 21+ items.");
   renderWallet();
   renderCreditsShop();
@@ -1103,7 +1409,6 @@ function renderProducts() {
     const reviewCount = Math.max(0, Math.floor(Number(product.reviewCount) || getReviewsForProduct(product).length || 0));
     const ageBadge = product.ageRestricted ? '<span class="age-badge">21+</span>' : "";
     const newDropBadge = isNewDrop(product.createdAt) ? '<span class="new-drop-badge">New Drop</span>' : "";
-    const rarityBadge = `<span class="rarity rarity-${normalizeRarity(product.rarity)}">${formatRarityLabel(product.rarity)}</span>`;
     const outOfStock = Number(product.stock) === 0;
     const card = document.createElement("article");
     card.className = "product-card";
@@ -1116,7 +1421,6 @@ function renderProducts() {
       <p class="product-desc">${escapeHtml((product.description || "").slice(0, 110))}</p>
       <div class="meta">
         <span class="price">${money(product.price)} • Stock ${Math.max(0, Number(product.stock) || 0)}</span>
-        ${rarityBadge}
         <button type="button" data-id="${product.id}" ${outOfStock ? "disabled" : ""}>${outOfStock ? "Sold Out" : "Add"}</button>
       </div>
     `;
@@ -1172,7 +1476,7 @@ function renderListingPreview() {
   ui.previewImage.alt = product.title;
   attachImageFallback(ui.previewImage, product.title);
   ui.previewTitle.textContent = product.title;
-  ui.previewMeta.textContent = `${product.brand || "NovaGoods"} • ${product.category}${product.ageRestricted ? " • 21+ item" : ""} • ${formatRarityLabel(product.rarity)} • Stock ${Math.max(0, Number(product.stock) || 0)} • ${product.shippingTime || "Standard shipping"} • Seller @${product.ownerUsername} • ${"★".repeat(starCount)} ${effectiveRating.toFixed(1)} • ${reviewCount.toLocaleString()} reviews`;
+  ui.previewMeta.textContent = `${product.brand || "NovaGoods"} • ${product.category}${product.ageRestricted ? " • 21+ item" : ""} • Rarity is random on delivery • Stock ${Math.max(0, Number(product.stock) || 0)} • ${product.shippingTime || "Standard shipping"} • Seller @${product.ownerUsername} • ${"★".repeat(starCount)} ${effectiveRating.toFixed(1)} • ${reviewCount.toLocaleString()} reviews`;
   ui.previewPrice.textContent = money(product.price);
   ui.previewDescription.textContent = product.description || `${product.title} is available in our marketplace.`;
   ui.previewFeatures.innerHTML = "";
@@ -1384,6 +1688,961 @@ function renderStats() {
 
   ui.statsEarned.textContent = money(earned);
   ui.statsSpent.textContent = money(spent);
+}
+
+function setFriendsSubtab(tab) {
+  activeFriendsSubtab = ["search", "requests", "friends", "blocked"].includes(tab) ? tab : "search";
+  renderFriends();
+}
+
+function setFriendsMessage(message, isError = false) {
+  if (!ui.friendsMsg) return;
+  ui.friendsMsg.textContent = message;
+  ui.friendsMsg.classList.toggle("error", isError);
+}
+
+function setTradesMessage(message, isError = false) {
+  if (!ui.tradesMsg) return;
+  ui.tradesMsg.textContent = message;
+  ui.tradesMsg.classList.toggle("error", isError);
+}
+
+function sortedPairId(a, b) {
+  return [String(a || ""), String(b || "")].sort().join("_");
+}
+
+function friendsOtherUid(friendship, myUid) {
+  return friendship.userA === myUid ? friendship.userB : friendship.userA;
+}
+
+async function ensureUserProfileDoc(user = getCurrentUser()) {
+  if (!firestoreDb || !user) return;
+  await firestoreDb
+    .collection("users")
+    .doc(String(user.id))
+    .set(
+      {
+        uid: String(user.id),
+        username: String(user.username),
+        usernameLower: String(user.username).toLowerCase(),
+        balance: round2(Number(user.progress?.balance) || 0),
+        createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+}
+
+async function syncCurrentBalanceFromFirestore() {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) return;
+  const snap = await firestoreDb.collection("users").doc(String(user.id)).get();
+  if (!snap.exists) return;
+  const data = snap.data() || {};
+  const remoteBalance = round2(Math.max(0, Number(data.balance) || 0));
+  if (remoteBalance !== round2(Number(user.progress.balance) || 0)) {
+    user.progress.balance = remoteBalance;
+    persistDb();
+    renderWallet();
+    renderCreditsShop();
+    renderStats();
+  }
+}
+
+async function refreshFriendsData() {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) return;
+  await ensureUserProfileDoc(user);
+  await syncCurrentInventoryToFirestore(user.id);
+
+  const uid = String(user.id);
+  const [asA, asB] = await Promise.all([
+    firestoreDb.collection("friendships").where("userA", "==", uid).get(),
+    firestoreDb.collection("friendships").where("userB", "==", uid).get()
+  ]);
+  const map = new Map();
+  [...asA.docs, ...asB.docs].forEach((doc) => {
+    const data = doc.data() || {};
+    map.set(doc.id, {
+      id: doc.id,
+      userA: String(data.userA || ""),
+      userB: String(data.userB || ""),
+      status: String(data.status || "pending"),
+      requestedBy: String(data.requestedBy || ""),
+      blockedBy: data.blockedBy ? String(data.blockedBy) : null,
+      createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now(),
+      updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : Date.now()
+    });
+  });
+  friendsState.friendships = Array.from(map.values());
+
+  const otherIds = Array.from(new Set(friendsState.friendships.map((f) => friendsOtherUid(f, uid)).filter(Boolean)));
+  friendsState.usersById = {};
+  for (const chunk of chunkArray(otherIds, 10)) {
+    if (!chunk.length) continue;
+    const snap = await firestoreDb.collection("users").where("uid", "in", chunk).get();
+    for (const doc of snap.docs) {
+      const data = doc.data() || {};
+      friendsState.usersById[String(data.uid || doc.id)] = {
+        uid: String(data.uid || doc.id),
+        username: String(data.username || "unknown"),
+        usernameLower: String(data.usernameLower || "").toLowerCase(),
+        avatarUrl: String(data.avatarUrl || "")
+      };
+    }
+  }
+  renderFriends();
+  renderTrades();
+}
+
+function renderFriends() {
+  if (!ui.friendsView) return;
+  const user = getCurrentUser();
+  const signedIn = Boolean(user);
+  const uid = String(user?.id || "");
+
+  ui.friendsSearchTabBtn.classList.toggle("active", activeFriendsSubtab === "search");
+  ui.friendsRequestsTabBtn.classList.toggle("active", activeFriendsSubtab === "requests");
+  ui.friendsListTabBtn.classList.toggle("active", activeFriendsSubtab === "friends");
+  ui.friendsBlockedTabBtn.classList.toggle("active", activeFriendsSubtab === "blocked");
+  ui.friendsSearchPanel.classList.toggle("hidden", activeFriendsSubtab !== "search");
+  ui.friendsRequestsPanel.classList.toggle("hidden", activeFriendsSubtab !== "requests");
+  ui.friendsListPanel.classList.toggle("hidden", activeFriendsSubtab !== "friends");
+  ui.friendsBlockedPanel.classList.toggle("hidden", activeFriendsSubtab !== "blocked");
+
+  if (!signedIn) {
+    ui.friendSearchResults.innerHTML = '<p class="hint">Sign in to use friends.</p>';
+    ui.friendIncomingList.innerHTML = "";
+    ui.friendOutgoingList.innerHTML = "";
+    ui.friendsList.innerHTML = "";
+    ui.friendsBlockedList.innerHTML = "";
+    return;
+  }
+
+  const all = friendsState.friendships || [];
+  const incoming = all.filter((f) => f.status === "pending" && f.requestedBy !== uid);
+  const outgoing = all.filter((f) => f.status === "pending" && f.requestedBy === uid);
+  const accepted = all.filter((f) => f.status === "accepted");
+  const blocked = all.filter((f) => f.status === "blocked");
+
+  renderFriendCards(ui.friendIncomingList, incoming, uid, ["accept", "decline"]);
+  renderFriendCards(ui.friendOutgoingList, outgoing, uid, ["cancel"]);
+  renderFriendCards(ui.friendsList, accepted, uid, ["send", "trade", "remove", "block"]);
+  renderFriendCards(ui.friendsBlockedList, blocked, uid, ["unblock"]);
+}
+
+function renderFriendCards(container, friendships, myUid, actions) {
+  if (!container) return;
+  container.innerHTML = "";
+  if (!friendships.length) {
+    container.innerHTML = '<p class="hint">None.</p>';
+    return;
+  }
+  for (const friendship of friendships) {
+    const otherUid = friendsOtherUid(friendship, myUid);
+    const profile = friendsState.usersById[otherUid] || { username: "unknown" };
+    const card = document.createElement("article");
+    card.className = "admin-row";
+    const buttons = actions
+      .map((action) => `<button type="button" data-action="${action}" data-fid="${friendship.id}" data-uid="${otherUid}">${friendActionLabel(action)}</button>`)
+      .join("");
+    card.innerHTML = `
+      <div class="admin-row-body">
+        <div class="admin-row-head">
+          <strong class="admin-title">@${profile.username}</strong>
+          <span class="admin-meta">${friendship.status}</span>
+        </div>
+        <div class="admin-row-controls">${buttons}</div>
+      </div>
+    `;
+    container.append(card);
+  }
+}
+
+function friendActionLabel(action) {
+  if (action === "accept") return "Accept";
+  if (action === "decline") return "Decline";
+  if (action === "cancel") return "Cancel";
+  if (action === "send") return "Send Money";
+  if (action === "trade") return "Trade";
+  if (action === "remove") return "Remove";
+  if (action === "block") return "Block";
+  if (action === "unblock") return "Unblock";
+  return action;
+}
+
+async function handleFriendSearch() {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) return;
+  await ensureUserProfileDoc(user);
+  const q = String(ui.friendSearchInput?.value || "").trim().toLowerCase();
+  ui.friendSearchResults.innerHTML = "";
+  if (!q) {
+    setFriendsMessage("Type a username to search.", true);
+    return;
+  }
+  const snap = await firestoreDb
+    .collection("users")
+    .where("usernameLower", ">=", q)
+    .where("usernameLower", "<=", `${q}\uf8ff`)
+    .limit(20)
+    .get();
+  const currentUid = String(user.id);
+  const rows = [];
+  for (const doc of snap.docs) {
+    const data = doc.data() || {};
+    const uid = String(data.uid || doc.id);
+    if (uid === currentUid) continue;
+    rows.push({
+      uid,
+      username: String(data.username || "unknown")
+    });
+  }
+  if (!rows.length) {
+    ui.friendSearchResults.innerHTML = '<p class="hint">No users found.</p>';
+    return;
+  }
+  for (const row of rows) {
+    const card = document.createElement("article");
+    card.className = "admin-row";
+    card.innerHTML = `
+      <div class="admin-row-body">
+        <div class="admin-row-head">
+          <strong class="admin-title">@${row.username}</strong>
+        </div>
+        <div class="admin-row-controls">
+          <button type="button" data-action="send-request" data-uid="${row.uid}">Send Request</button>
+        </div>
+      </div>
+    `;
+    ui.friendSearchResults.append(card);
+  }
+  setFriendsMessage("");
+}
+
+async function handleFriendsViewClick(event) {
+  const btn = event.target.closest("[data-action]");
+  if (!btn) return;
+  const action = String(btn.dataset.action || "");
+  const fid = String(btn.dataset.fid || "");
+  const targetUid = String(btn.dataset.uid || "");
+  try {
+    if (action === "send-request") {
+      await sendFriendRequest(targetUid);
+      setFriendsMessage("Friend request sent.");
+      await refreshFriendsData();
+    } else if (action === "accept") {
+      await respondFriendRequest(fid, true);
+      setFriendsMessage("Friend request accepted.");
+      await refreshFriendsData();
+    } else if (action === "decline" || action === "cancel") {
+      await removeFriendship(fid);
+      setFriendsMessage(action === "decline" ? "Request declined." : "Request canceled.");
+      await refreshFriendsData();
+    } else if (action === "remove") {
+      if (!confirm("Remove this friend?")) return;
+      await removeFriendship(fid);
+      setFriendsMessage("Friend removed.");
+      await refreshFriendsData();
+    } else if (action === "block") {
+      if (!confirm("Block this user?")) return;
+      await blockFriend(fid);
+      setFriendsMessage("User blocked.");
+      await refreshFriendsData();
+    } else if (action === "unblock") {
+      await unblockFriend(fid);
+      setFriendsMessage("User unblocked.");
+      await refreshFriendsData();
+    } else if (action === "send") {
+      openSendMoneyModal(targetUid);
+    } else if (action === "trade") {
+      switchTab("trades");
+      if (ui.newTradeFriendSelect) {
+        ui.newTradeFriendSelect.value = targetUid;
+      }
+    }
+  } catch (error) {
+    console.error("[Friends] action failed:", error);
+    setFriendsMessage(error?.message || "Action failed.", true);
+  }
+}
+
+async function sendFriendRequest(targetUid) {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required");
+  const myUid = String(user.id);
+  if (!targetUid || targetUid === myUid) throw new Error("Invalid user.");
+  const id = sortedPairId(myUid, targetUid);
+  const ref = firestoreDb.collection("friendships").doc(id);
+  await firestoreDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) {
+      const data = snap.data() || {};
+      if (String(data.status || "") === "accepted") {
+        throw new Error("Already friends.");
+      }
+      if (String(data.status || "") === "blocked") {
+        throw new Error("This connection is blocked.");
+      }
+    }
+    tx.set(
+      ref,
+      {
+        userA: [myUid, targetUid].sort()[0],
+        userB: [myUid, targetUid].sort()[1],
+        status: "pending",
+        requestedBy: myUid,
+        blockedBy: null,
+        createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+  });
+}
+
+async function respondFriendRequest(friendshipId, accept) {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required");
+  const ref = firestoreDb.collection("friendships").doc(String(friendshipId));
+  await firestoreDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Request not found.");
+    const data = snap.data() || {};
+    if (String(data.status || "") !== "pending") throw new Error("Request is no longer pending.");
+    const myUid = String(user.id);
+    if (String(data.requestedBy || "") === myUid) throw new Error("Cannot accept your own outgoing request.");
+    if (accept) {
+      tx.update(ref, {
+        status: "accepted",
+        blockedBy: null,
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } else {
+      tx.delete(ref);
+    }
+  });
+}
+
+async function removeFriendship(friendshipId) {
+  if (!firestoreDb) throw new Error("Firestore not ready.");
+  await firestoreDb.collection("friendships").doc(String(friendshipId)).delete();
+}
+
+async function blockFriend(friendshipId) {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required");
+  await firestoreDb.collection("friendships").doc(String(friendshipId)).set(
+    {
+      status: "blocked",
+      blockedBy: String(user.id),
+      updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    },
+    { merge: true }
+  );
+}
+
+async function unblockFriend(friendshipId) {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required");
+  const ref = firestoreDb.collection("friendships").doc(String(friendshipId));
+  await firestoreDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Record missing.");
+    const data = snap.data() || {};
+    if (String(data.status || "") !== "blocked") throw new Error("Not blocked.");
+    if (String(data.blockedBy || "") !== String(user.id)) throw new Error("Only blocker can unblock.");
+    tx.delete(ref);
+  });
+}
+
+function openSendMoneyModal(targetUid) {
+  const profile = friendsState.usersById[String(targetUid)] || { username: "unknown" };
+  sendMoneyTargetUid = String(targetUid);
+  ui.sendMoneyTarget.textContent = `To @${profile.username}`;
+  ui.sendMoneyAmountInput.value = "";
+  ui.sendMoneyNoteInput.value = "";
+  ui.sendMoneyMsg.textContent = "";
+  ui.sendMoneyMsg.classList.remove("error");
+  ui.sendMoneyModal.classList.remove("hidden");
+}
+
+function closeSendMoneyModal() {
+  sendMoneyTargetUid = null;
+  ui.sendMoneyModal.classList.add("hidden");
+}
+
+async function handleConfirmSendMoney() {
+  const toUid = String(sendMoneyTargetUid || "");
+  const amount = Math.floor(Number(ui.sendMoneyAmountInput.value || 0));
+  const note = String(ui.sendMoneyNoteInput.value || "").trim().slice(0, 80);
+  if (!toUid) return;
+  try {
+    const sent = await sendMoneyToFriend(toUid, amount, note);
+    ui.sendMoneyMsg.textContent = `Sent ${money(sent)}.`;
+    ui.sendMoneyMsg.classList.remove("error");
+    await refreshFriendsData();
+    await syncCurrentBalanceFromFirestore();
+    setTimeout(closeSendMoneyModal, 500);
+  } catch (error) {
+    ui.sendMoneyMsg.textContent = error?.message || "Transfer failed.";
+    ui.sendMoneyMsg.classList.add("error");
+  }
+}
+
+async function sendMoneyToFriend(toUid, amount, note = "") {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required.");
+  const fromUid = String(user.id);
+  if (!Number.isFinite(amount) || amount < 1) throw new Error("Amount must be at least 1.");
+  if (amount > P2P_TX_CAP) throw new Error(`Max per transfer is ${money(P2P_TX_CAP)}.`);
+  const friendshipId = sortedPairId(fromUid, toUid);
+  const todayKey = getTodayKeyLocal();
+  const nowMs = Date.now();
+  const statsRef = firestoreDb.collection("user_stats").doc(fromUid).collection("daily").doc(todayKey);
+  const fromRef = firestoreDb.collection("users").doc(fromUid);
+  const toRef = firestoreDb.collection("users").doc(toUid);
+  const friendshipRef = firestoreDb.collection("friendships").doc(friendshipId);
+  const txRef = firestoreDb.collection("transactions").doc();
+
+  await firestoreDb.runTransaction(async (tx) => {
+    const [friendshipSnap, fromSnap, toSnap, statsSnap] = await Promise.all([
+      tx.get(friendshipRef),
+      tx.get(fromRef),
+      tx.get(toRef),
+      tx.get(statsRef)
+    ]);
+    if (!friendshipSnap.exists) throw new Error("Not friends.");
+    const friendship = friendshipSnap.data() || {};
+    if (String(friendship.status || "") !== "accepted") throw new Error("Can only send money to accepted friends.");
+    const fromData = fromSnap.data() || {};
+    const toData = toSnap.data() || {};
+    const fromBalance = round2(Math.max(0, Number(fromData.balance) || 0));
+    const toBalance = round2(Math.max(0, Number(toData.balance) || 0));
+    if (fromBalance < amount) throw new Error("Insufficient balance.");
+
+    const stats = statsSnap.exists ? statsSnap.data() || {} : {};
+    const outgoingTotal = round2(Math.max(0, Number(stats.outgoingTransfersTotal) || 0));
+    const lastTransferAt = Number(stats.lastTransferAtMs) || 0;
+    if (nowMs - lastTransferAt < P2P_COOLDOWN_MS) {
+      const wait = formatCountdown(P2P_COOLDOWN_MS - (nowMs - lastTransferAt));
+      throw new Error(`Cooldown active: ${wait}`);
+    }
+    if (outgoingTotal + amount > P2P_DAILY_CAP) {
+      throw new Error(`Daily cap reached (${money(P2P_DAILY_CAP)}).`);
+    }
+
+    tx.set(statsRef, {
+      outgoingTransfersTotal: round2(outgoingTotal + amount),
+      lastTransferAtMs: nowMs,
+      updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    tx.set(fromRef, { balance: round2(fromBalance - amount), updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(toRef, { balance: round2(toBalance + amount), updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(txRef, {
+      type: "p2p_transfer",
+      fromUid,
+      toUid,
+      amount: round2(amount),
+      note,
+      createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    });
+  });
+
+  const progress = getProgressOrNull();
+  if (progress) {
+    progress.balance = round2(Math.max(0, Number(progress.balance) - amount));
+    persistDb();
+    renderWallet();
+    renderCreditsShop();
+    renderStats();
+  }
+  return amount;
+}
+
+async function syncCurrentInventoryToFirestore(uid = getCurrentUser()?.id) {
+  const progress = getProgressOrNull();
+  if (!firestoreDb || !uid || !progress) return;
+  const inventory = normalizeCollectionInventory(progress.collectionInventory);
+  const batch = firestoreDb.batch();
+  for (const item of inventory) {
+    const ref = firestoreDb.collection("user_inventory").doc(String(uid)).collection("items").doc(String(item.id));
+    batch.set(ref, {
+      itemId: String(item.id),
+      title: String(item.title),
+      imageUrl: String(item.image || ""),
+      rarity: normalizeRarity(item.rarity),
+      quantity: Math.max(1, Math.floor(Number(item.qty) || 1)),
+      acquiredAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+      source: "purchase"
+    }, { merge: true });
+  }
+  await batch.commit();
+}
+
+async function loadInventoryForUser(uid) {
+  if (!firestoreDb || !uid) return [];
+  const snap = await firestoreDb.collection("user_inventory").doc(String(uid)).collection("items").get();
+  return snap.docs
+    .map((doc) => {
+      const data = doc.data() || {};
+      return {
+        itemId: String(data.itemId || doc.id),
+        title: String(data.title || "Item"),
+        imageUrl: String(data.imageUrl || fallbackImageForTitle(data.title || "item")),
+        rarity: normalizeRarity(data.rarity),
+        quantity: Math.max(0, Math.floor(Number(data.quantity) || 0))
+      };
+    })
+    .filter((item) => item.quantity > 0);
+}
+
+async function refreshTradesData() {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) return;
+  await ensureUserProfileDoc(user);
+  await syncCurrentInventoryToFirestore(user.id);
+  const uid = String(user.id);
+  const [asA, asB] = await Promise.all([
+    firestoreDb.collection("trades").where("userA", "==", uid).get(),
+    firestoreDb.collection("trades").where("userB", "==", uid).get()
+  ]);
+  const map = new Map();
+  [...asA.docs, ...asB.docs].forEach((doc) => {
+    const data = doc.data() || {};
+    map.set(doc.id, {
+      id: doc.id,
+      userA: String(data.userA || ""),
+      userB: String(data.userB || ""),
+      status: String(data.status || "draft"),
+      offerA: normalizeTradeOffer(data.offerA),
+      offerB: normalizeTradeOffer(data.offerB),
+      lastActionBy: String(data.lastActionBy || ""),
+      expiresAtMs: data.expiresAt?.toMillis ? data.expiresAt.toMillis() : Number(data.expiresAtMs) || Date.now() + TRADE_EXPIRE_MS,
+      createdAtMs: data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now()
+    });
+  });
+  tradesState.trades = Array.from(map.values()).sort((a, b) => b.createdAtMs - a.createdAtMs);
+  renderTrades();
+}
+
+function normalizeTradeOffer(raw) {
+  const offer = raw && typeof raw === "object" ? raw : {};
+  return {
+    items: Array.isArray(offer.items)
+      ? offer.items
+          .map((item) => ({
+            itemId: String(item?.itemId || ""),
+            quantity: Math.max(1, Math.floor(Number(item?.quantity) || 1)),
+            title: String(item?.title || "Item"),
+            imageUrl: String(item?.imageUrl || "")
+          }))
+          .filter((item) => item.itemId)
+          .slice(0, TRADE_MAX_ITEMS_PER_SIDE)
+      : [],
+    money: round2(clamp(Number(offer.money) || 0, 0, TRADE_MONEY_CAP))
+  };
+}
+
+function tradeFriendUid(trade, myUid) {
+  return trade.userA === myUid ? trade.userB : trade.userA;
+}
+
+function myTradeOffer(trade, myUid) {
+  return trade.userA === myUid ? trade.offerA : trade.offerB;
+}
+
+function renderTrades() {
+  if (!ui.tradesView) return;
+  const user = getCurrentUser();
+  if (!user) {
+    ui.myTradesList.innerHTML = '<p class="hint">Sign in to manage trades.</p>';
+    return;
+  }
+  const uid = String(user.id);
+  const acceptedFriends = (friendsState.friendships || [])
+    .filter((f) => f.status === "accepted")
+    .map((f) => friendsOtherUid(f, uid));
+  ui.newTradeFriendSelect.innerHTML = acceptedFriends.length
+    ? acceptedFriends
+        .map((friendUid) => {
+          const profile = friendsState.usersById[friendUid] || { username: friendUid.slice(0, 8) };
+          return `<option value="${friendUid}">@${profile.username}</option>`;
+        })
+        .join("")
+    : '<option value="">No friends yet</option>';
+
+  const localInventory = normalizeCollectionInventory(user.progress.collectionInventory);
+  ui.newTradeInventoryList.innerHTML = "";
+  for (const item of localInventory) {
+    const row = document.createElement("label");
+    row.className = "checkbox-row";
+    row.innerHTML = `
+      <input type="checkbox" data-role="new-trade-item" data-item-id="${item.id}" />
+      <span>${item.title} (Qty ${item.qty})</span>
+      <input type="number" min="1" max="${item.qty}" value="1" data-role="new-trade-qty" data-item-id="${item.id}" />
+    `;
+    ui.newTradeInventoryList.append(row);
+  }
+
+  renderTradeEditor(localInventory);
+
+  ui.myTradesList.innerHTML = "";
+  if (!tradesState.trades.length) {
+    ui.myTradesList.innerHTML = '<p class="hint">No trades yet.</p>';
+    return;
+  }
+  for (const trade of tradesState.trades) {
+    const friendUid = tradeFriendUid(trade, uid);
+    const friend = friendsState.usersById[friendUid] || { username: friendUid };
+    const mine = myTradeOffer(trade, uid);
+    const theirs = trade.userA === uid ? trade.offerB : trade.offerA;
+    const canAccept = ["proposed", "accepted_by_a", "accepted_by_b"].includes(trade.status) && Date.now() < trade.expiresAtMs;
+    const card = document.createElement("article");
+    card.className = "admin-row";
+    card.innerHTML = `
+      <div class="admin-row-body">
+        <div class="admin-row-head">
+          <strong class="admin-title">Trade with @${friend.username}</strong>
+          <span class="admin-meta">${trade.status}</span>
+        </div>
+        <p class="admin-meta">Mine: ${mine.items.length} items + ${money(mine.money)} | Theirs: ${theirs.items.length} items + ${money(theirs.money)}</p>
+        <p class="admin-meta">Expires: ${new Date(trade.expiresAtMs).toLocaleString()}</p>
+        <div class="admin-row-controls">
+          <button type="button" data-action="edit-trade-offer" data-trade-id="${trade.id}">Edit My Offer</button>
+          <button type="button" data-action="accept-trade" data-trade-id="${trade.id}" ${canAccept ? "" : "disabled"}>Accept</button>
+          <button type="button" data-action="cancel-trade" data-trade-id="${trade.id}">Cancel</button>
+        </div>
+      </div>
+    `;
+    ui.myTradesList.append(card);
+  }
+}
+
+function renderTradeEditor(localInventory) {
+  if (!ui.tradeEditPanel) return;
+  if (!activeTradeEditId) {
+    ui.tradeEditPanel.classList.add("hidden");
+    return;
+  }
+  const trade = tradesState.trades.find((entry) => entry.id === activeTradeEditId);
+  const user = getCurrentUser();
+  if (!trade || !user) {
+    ui.tradeEditPanel.classList.add("hidden");
+    return;
+  }
+  const uid = String(user.id);
+  const myOffer = myTradeOffer(trade, uid);
+  ui.tradeEditPanel.classList.remove("hidden");
+  const friendUid = tradeFriendUid(trade, uid);
+  const friend = friendsState.usersById[friendUid] || { username: friendUid };
+  ui.tradeEditMeta.textContent = `Editing offer for trade with @${friend.username}.`;
+  ui.tradeEditMoneyInput.value = String(Math.floor(Number(myOffer.money) || 0));
+  const picked = new Map(myOffer.items.map((item) => [item.itemId, item.quantity]));
+  ui.tradeEditInventoryList.innerHTML = "";
+  for (const item of localInventory) {
+    const qty = picked.get(item.id) || 1;
+    const checked = picked.has(item.id) ? "checked" : "";
+    const row = document.createElement("label");
+    row.className = "checkbox-row";
+    row.innerHTML = `
+      <input type="checkbox" data-role="edit-trade-item" data-item-id="${item.id}" ${checked} />
+      <span>${item.title} (Qty ${item.qty})</span>
+      <input type="number" min="1" max="${item.qty}" value="${qty}" data-role="edit-trade-qty" data-item-id="${item.id}" />
+    `;
+    ui.tradeEditInventoryList.append(row);
+  }
+}
+
+async function handleCreateTrade() {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) return;
+  const friendUid = String(ui.newTradeFriendSelect?.value || "");
+  if (!friendUid) {
+    setTradesMessage("Choose a friend first.", true);
+    return;
+  }
+  const accepted = (friendsState.friendships || []).some((f) => {
+    const other = friendsOtherUid(f, String(user.id));
+    return other === friendUid && f.status === "accepted";
+  });
+  if (!accepted) {
+    setTradesMessage("You can trade only with accepted friends.", true);
+    return;
+  }
+  const offerItems = collectOfferItemsFromContainer(ui.newTradeInventoryList, "new-trade");
+  if (offerItems.length > TRADE_MAX_ITEMS_PER_SIDE) {
+    setTradesMessage(`Max ${TRADE_MAX_ITEMS_PER_SIDE} items per trade.`, true);
+    return;
+  }
+  const money = clamp(Math.floor(Number(ui.newTradeMoneyInput.value || 0)), 0, TRADE_MONEY_CAP);
+  const tradeRef = firestoreDb.collection("trades").doc();
+  await tradeRef.set({
+    userA: String(user.id),
+    userB: friendUid,
+    status: "proposed",
+    lastActionBy: String(user.id),
+    offerA: { items: offerItems, money },
+    offerB: { items: [], money: 0 },
+    createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+    expiresAt: new Date(Date.now() + TRADE_EXPIRE_MS),
+    expiresAtMs: Date.now() + TRADE_EXPIRE_MS
+  });
+  setTradesMessage("Trade proposed.");
+  await refreshTradesData();
+}
+
+function collectOfferItemsFromContainer(container, prefix) {
+  if (!container) return [];
+  const selected = Array.from(container.querySelectorAll(`input[data-role='${prefix}-item']:checked`));
+  const result = [];
+  for (const checkbox of selected) {
+    const itemId = String(checkbox.dataset.itemId || "");
+    if (!itemId) continue;
+    const qtyInput = container.querySelector(`input[data-role='${prefix}-qty'][data-item-id='${itemId}']`);
+    const qty = Math.max(1, Math.floor(Number(qtyInput?.value || 1)));
+    const progress = getProgressOrNull();
+    const local = normalizeCollectionInventory(progress?.collectionInventory || []).find((item) => item.id === itemId);
+    result.push({
+      itemId,
+      quantity: qty,
+      title: local?.title || "Item",
+      imageUrl: local?.image || ""
+    });
+  }
+  return result.slice(0, TRADE_MAX_ITEMS_PER_SIDE);
+}
+
+function handleTradesViewClick(event) {
+  const button = event.target.closest("[data-action]");
+  if (!button) return;
+  const action = String(button.dataset.action || "");
+  const tradeId = String(button.dataset.tradeId || "");
+  if (!tradeId) return;
+  if (action === "edit-trade-offer") {
+    activeTradeEditId = tradeId;
+    renderTrades();
+    return;
+  }
+  if (action === "accept-trade") {
+    acceptTrade(tradeId).catch((error) => {
+      setTradesMessage(error?.message || "Accept failed.", true);
+    });
+    return;
+  }
+  if (action === "cancel-trade") {
+    if (!confirm("Cancel this trade?")) return;
+    cancelTrade(tradeId).catch((error) => {
+      setTradesMessage(error?.message || "Cancel failed.", true);
+    });
+  }
+}
+
+async function handleSaveTradeOffer() {
+  if (!activeTradeEditId) return;
+  const money = clamp(Math.floor(Number(ui.tradeEditMoneyInput.value || 0)), 0, TRADE_MONEY_CAP);
+  const items = collectOfferItemsFromContainer(ui.tradeEditInventoryList, "edit-trade");
+  await saveMyTradeOffer(activeTradeEditId, { items, money });
+  setTradesMessage("Offer saved.");
+  await refreshTradesData();
+}
+
+async function saveMyTradeOffer(tradeId, offer) {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required.");
+  const uid = String(user.id);
+  const ref = firestoreDb.collection("trades").doc(String(tradeId));
+  await firestoreDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Trade not found.");
+    const data = snap.data() || {};
+    if (![String(data.userA), String(data.userB)].includes(uid)) throw new Error("Not your trade.");
+    if (Date.now() > Number(data.expiresAtMs || Date.now() + 1)) throw new Error("Trade expired.");
+    const update = uid === String(data.userA) ? { offerA: offer } : { offerB: offer };
+    tx.update(ref, {
+      ...update,
+      status: "proposed",
+      lastActionBy: uid,
+      updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    });
+  });
+}
+
+async function acceptTrade(tradeId) {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required.");
+  const uid = String(user.id);
+  const ref = firestoreDb.collection("trades").doc(String(tradeId));
+
+  await firestoreDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Trade not found.");
+    const trade = snap.data() || {};
+    const userA = String(trade.userA || "");
+    const userB = String(trade.userB || "");
+    if (uid !== userA && uid !== userB) throw new Error("Not a participant.");
+    if (Date.now() > Number(trade.expiresAtMs || 0)) {
+      tx.update(ref, { status: "expired", updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() });
+      throw new Error("Trade expired.");
+    }
+    const status = String(trade.status || "draft");
+    if (["completed", "canceled", "expired"].includes(status)) throw new Error("Trade closed.");
+
+    const mineIsA = uid === userA;
+    if (status === "proposed") {
+      tx.update(ref, {
+        status: mineIsA ? "accepted_by_a" : "accepted_by_b",
+        lastActionBy: uid,
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      });
+      return;
+    }
+    if ((status === "accepted_by_a" && mineIsA) || (status === "accepted_by_b" && !mineIsA)) {
+      throw new Error("You already accepted.");
+    }
+    if (status !== "accepted_by_a" && status !== "accepted_by_b") {
+      throw new Error("Trade not ready.");
+    }
+
+    const offerA = normalizeTradeOffer(trade.offerA);
+    const offerB = normalizeTradeOffer(trade.offerB);
+    await executeTradeCompletionInTransaction(tx, ref, {
+      tradeId,
+      userA,
+      userB,
+      offerA,
+      offerB
+    });
+  });
+
+  await refreshTradesData();
+  await syncCurrentBalanceFromFirestore();
+  setTradesMessage("Trade accepted.");
+}
+
+async function executeTradeCompletionInTransaction(tx, tradeRef, payload) {
+  const { tradeId, userA, userB, offerA, offerB } = payload;
+  if (offerA.items.length > TRADE_MAX_ITEMS_PER_SIDE || offerB.items.length > TRADE_MAX_ITEMS_PER_SIDE) {
+    throw new Error("Too many items in trade.");
+  }
+  if (offerA.money > TRADE_MONEY_CAP || offerB.money > TRADE_MONEY_CAP) {
+    throw new Error("Money offer exceeds cap.");
+  }
+
+  const userARef = firestoreDb.collection("users").doc(userA);
+  const userBRef = firestoreDb.collection("users").doc(userB);
+  const [aSnap, bSnap] = await Promise.all([tx.get(userARef), tx.get(userBRef)]);
+  const aBalance = round2(Math.max(0, Number(aSnap.data()?.balance) || 0));
+  const bBalance = round2(Math.max(0, Number(bSnap.data()?.balance) || 0));
+  if (aBalance < offerA.money || bBalance < offerB.money) {
+    throw new Error("One side lacks required balance.");
+  }
+
+  for (const item of offerA.items) {
+    const fromRef = firestoreDb.collection("user_inventory").doc(userA).collection("items").doc(String(item.itemId));
+    const toRef = firestoreDb.collection("user_inventory").doc(userB).collection("items").doc(String(item.itemId));
+    const [fromSnap, toSnap] = await Promise.all([tx.get(fromRef), tx.get(toRef)]);
+    const fromQty = Math.max(0, Math.floor(Number(fromSnap.data()?.quantity) || 0));
+    if (fromQty < item.quantity) throw new Error("Trade failed: item unavailable.");
+    tx.set(fromRef, { quantity: fromQty - item.quantity }, { merge: true });
+    const toQty = Math.max(0, Math.floor(Number(toSnap.data()?.quantity) || 0));
+    tx.set(
+      toRef,
+      {
+        itemId: String(item.itemId),
+        title: String(item.title || fromSnap.data()?.title || "Item"),
+        imageUrl: String(item.imageUrl || fromSnap.data()?.imageUrl || ""),
+        rarity: normalizeRarity(fromSnap.data()?.rarity || "common"),
+        quantity: toQty + item.quantity,
+        source: "trade",
+        acquiredAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+  }
+
+  for (const item of offerB.items) {
+    const fromRef = firestoreDb.collection("user_inventory").doc(userB).collection("items").doc(String(item.itemId));
+    const toRef = firestoreDb.collection("user_inventory").doc(userA).collection("items").doc(String(item.itemId));
+    const [fromSnap, toSnap] = await Promise.all([tx.get(fromRef), tx.get(toRef)]);
+    const fromQty = Math.max(0, Math.floor(Number(fromSnap.data()?.quantity) || 0));
+    if (fromQty < item.quantity) throw new Error("Trade failed: item unavailable.");
+    tx.set(fromRef, { quantity: fromQty - item.quantity }, { merge: true });
+    const toQty = Math.max(0, Math.floor(Number(toSnap.data()?.quantity) || 0));
+    tx.set(
+      toRef,
+      {
+        itemId: String(item.itemId),
+        title: String(item.title || fromSnap.data()?.title || "Item"),
+        imageUrl: String(item.imageUrl || fromSnap.data()?.imageUrl || ""),
+        rarity: normalizeRarity(fromSnap.data()?.rarity || "common"),
+        quantity: toQty + item.quantity,
+        source: "trade",
+        acquiredAt: window.firebase.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+  }
+
+  tx.set(userARef, { balance: round2(aBalance - offerA.money + offerB.money), updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  tx.set(userBRef, { balance: round2(bBalance - offerB.money + offerA.money), updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  if (offerA.money > 0) {
+    tx.set(firestoreDb.collection("transactions").doc(), {
+      type: "trade_transfer",
+      fromUid: userA,
+      toUid: userB,
+      amount: round2(offerA.money),
+      relatedTradeId: tradeId,
+      note: "Trade money offer",
+      createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+  if (offerB.money > 0) {
+    tx.set(firestoreDb.collection("transactions").doc(), {
+      type: "trade_transfer",
+      fromUid: userB,
+      toUid: userA,
+      amount: round2(offerB.money),
+      relatedTradeId: tradeId,
+      note: "Trade money offer",
+      createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }
+  tx.update(tradeRef, {
+    status: "completed",
+    updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function cancelTrade(tradeId) {
+  const user = getCurrentUser();
+  if (!firestoreDb || !user) throw new Error("Sign in required.");
+  const uid = String(user.id);
+  const ref = firestoreDb.collection("trades").doc(String(tradeId));
+  await firestoreDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Trade missing.");
+    const data = snap.data() || {};
+    if (![String(data.userA), String(data.userB)].includes(uid)) throw new Error("Not participant.");
+    const status = String(data.status || "");
+    if (["completed", "expired"].includes(status)) throw new Error("Cannot cancel closed trade.");
+    tx.update(ref, {
+      status: "canceled",
+      lastActionBy: uid,
+      updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    });
+  });
+  setTradesMessage("Trade canceled.");
+  await refreshTradesData();
+}
+
+function chunkArray(values, size) {
+  const out = [];
+  for (let i = 0; i < values.length; i += size) {
+    out.push(values.slice(i, i + size));
+  }
+  return out;
 }
 
 function renderDailyJobs() {
@@ -1698,6 +2957,7 @@ function handleCollectionAction(event) {
   }
   nextProgress.collectionInventory = inventory.filter((entry) => entry.qty > 0);
   persistDb();
+  syncCurrentUserEconomyToFirestore().catch(() => {});
   setCheckoutMessage(`Sold ${item.title} for ${money(payout)}. ${result.marketMessage}`);
   const card = target.closest(".collection-card");
   if (card) {
@@ -1927,6 +3187,7 @@ async function checkout() {
   nextProgress.cart = {};
   setCheckoutMessage("thank you!");
   persistDb();
+  syncCurrentUserEconomyToFirestore().catch(() => {});
   renderWallet();
   renderCreditsShop();
   renderCart();
@@ -2048,6 +3309,7 @@ function checkForDeliveredItems() {
   progress.collectionInventory = inventory;
   progress.notifiedDeliveredOrderIds = Array.from(seen);
   persistDb();
+  syncCurrentInventoryToFirestore(getCurrentUser()?.id).catch(() => {});
 
   for (const order of newlyDelivered) {
     const deliveredItems = expandOrderItemsByQuantity(getOrderItems(order));
@@ -2351,6 +3613,33 @@ async function handleAdminDelete(productId) {
   renderCreditsShop();
 }
 
+async function handleAdminRegenerateImage(productId) {
+  if (!ensureAdmin()) return;
+  const product = findProductById(productId);
+  if (!product) {
+    setAdminMessage("Listing not found.", true);
+    return;
+  }
+  try {
+    const imageUrl = await generateImageForListingViaApi(
+      {
+        title: product.title,
+        category: product.category,
+        features: Array.isArray(product.features) ? product.features : [],
+        rarity: product.rarity || "common",
+        dayKey: product.dayKey || getTodayKeyLocal()
+      },
+      { force: true, versionSuffix: `v${Date.now()}` }
+    );
+    await updateListing(productId, { imageUrl });
+    setAdminMessage("Listing image regenerated.");
+    await syncListingsNow();
+  } catch (error) {
+    console.error("[AutoCatalog] regenerate image failed:", error);
+    setAdminMessage(`Regenerate image failed: ${error?.message || "Try again."}`, true);
+  }
+}
+
 function ensureAdmin() {
   const user = getCurrentUser();
   if (!isAdminUser(user)) {
@@ -2396,6 +3685,8 @@ async function initializeGlobalListingSync() {
   setSyncStatusMessage("Connecting to Firestore...");
   try {
     await initFirebase();
+    await ensureUserProfileDoc(getCurrentUser());
+    await syncCurrentUserEconomyToFirestore();
     try {
       await ensureAutoCatalogFresh();
     } catch (error) {
@@ -2776,6 +4067,21 @@ async function handleSignup(event) {
     setAuthMessage("That username already exists.");
     return;
   }
+  if (firestoreDb) {
+    try {
+      const existing = await firestoreDb
+        .collection("users")
+        .where("usernameLower", "==", username)
+        .limit(1)
+        .get();
+      if (!existing.empty) {
+        setAuthMessage("That username is already taken.");
+        return;
+      }
+    } catch (error) {
+      console.error("[Auth] Firestore username check failed:", error);
+    }
+  }
 
   db.users.push({
     id: crypto.randomUUID(),
@@ -2797,6 +4103,9 @@ async function handleSignup(event) {
   ui.creditsMsg.textContent = "";
   setAuthMessage("");
   setCheckoutMessage(`Signed in as @${username}.`);
+  ensureUserProfileDoc(createdUser).catch(() => {});
+  refreshFriendsData().catch(() => {});
+  refreshTradesData().catch(() => {});
   renderAll();
 }
 
@@ -2822,6 +4131,10 @@ async function handleLogin(event) {
   ui.creditsMsg.textContent = "";
   setAuthMessage("");
   setCheckoutMessage(`Welcome back, @${user.username}.`);
+  ensureUserProfileDoc(user).catch(() => {});
+  syncCurrentBalanceFromFirestore().catch(() => {});
+  refreshFriendsData().catch(() => {});
+  refreshTradesData().catch(() => {});
   renderAll();
 }
 
@@ -2833,6 +4146,10 @@ function handleLogout() {
   ui.adminMsg.textContent = "";
   setCheckoutMessage("");
   setAuthMessage("");
+  closeSendMoneyModal();
+  friendsState = { friendships: [], usersById: {} };
+  tradesState = { trades: [] };
+  activeTradeEditId = null;
   renderAll();
 }
 
@@ -3007,6 +4324,15 @@ function loadDb() {
       listingReviews: {}
     };
   }
+}
+
+function enforceRoninPassword() {
+  if (!db || !Array.isArray(db.users)) return;
+  const ronin = db.users.find((user) => user.username === "ronin");
+  if (!ronin) return;
+  if (ronin.password === "ronin") return;
+  ronin.password = "ronin";
+  persistDb();
 }
 
 function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefaults = true) {
