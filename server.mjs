@@ -13,6 +13,15 @@ const ADMIN_USERNAME = "ronin";
 const ADMIN_PASSWORD_HASH = sha256(process.env.ADMIN_PASSWORD || "ronin");
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const NEW_DROP_WINDOW_MS = 24 * 60 * 60 * 1000;
+const GENERATED_DIR = path.join(__dirname, "public", "generated-products");
+const IMAGE_MODEL = process.env.IMAGE_MODEL || "gpt-image-1";
+const IMAGE_PROVIDER = (process.env.IMAGE_PROVIDER || "openai").toLowerCase();
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const AUTO_IMAGE_FALLBACK_BASE = "public/images/catalog";
+const KNOWN_BRANDS = new Set([
+  "apple", "samsung", "sony", "nintendo", "xbox", "playstation", "microsoft", "google", "amazon", "temu",
+  "walmart", "target", "dell", "hp", "asus", "lenovo", "razer", "logitech", "beats", "bose", "nike", "adidas"
+]);
 
 const db = await loadDb();
 const removedDemoCount = stripDemoListings(db);
@@ -70,6 +79,59 @@ async function handleApi(req, res, url) {
     });
     await persistDb();
     sendJson(res, 200, { token, expiresAt: Date.now() + SESSION_TTL_MS });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/generateProductImage") {
+    const body = await parseJsonBody(req);
+    const listing = normalizeImageListingInput(body?.listing);
+    const dayKey = normalizeDayKey(body?.dayKey);
+    const force = body?.force === true;
+    const imageKey = normalizeImageKey(body?.imageKey || buildImageKey(listing, dayKey));
+    const providerAllowed = IMAGE_PROVIDER === "openai" && Boolean(OPENAI_API_KEY);
+    if (!providerAllowed) {
+      const fallback = fallbackImageForCategory(listing.category);
+      sendJson(res, 200, { imageUrl: fallback, imageKey, cached: false, fallback: true, reason: "provider_not_configured" });
+      return;
+    }
+
+    const authOk = isAdminAuthorized(req);
+    if (!authOk && body?.autoGeneration !== true) {
+      sendJson(res, 401, { error: "Admin or auto generation context required" });
+      return;
+    }
+
+    db.generatedImages = db.generatedImages && typeof db.generatedImages === "object" ? db.generatedImages : {};
+    const cached = db.generatedImages[imageKey];
+    if (!force && cached?.imageUrl && !cached.failed && !isFallbackImagePath(cached.imageUrl)) {
+      sendJson(res, 200, { imageUrl: cached.imageUrl, imageKey, cached: true, fallback: false });
+      return;
+    }
+
+    try {
+      const output = await generateAndStoreProductImage({ listing, imageKey, dayKey });
+      db.generatedImages[imageKey] = {
+        imageUrl: output.imageUrl,
+        dayKey,
+        createdAt: new Date().toISOString(),
+        provider: IMAGE_PROVIDER,
+        promptHash: sha256(output.prompt)
+      };
+      await persistDb();
+      sendJson(res, 200, { imageUrl: output.imageUrl, imageKey, cached: false, fallback: false });
+    } catch (error) {
+      const fallback = fallbackImageForCategory(listing.category);
+      db.generatedImages[imageKey] = {
+        imageUrl: fallback,
+        dayKey,
+        createdAt: new Date().toISOString(),
+        provider: IMAGE_PROVIDER,
+        failed: true,
+        error: String(error?.message || "generation_failed")
+      };
+      await persistDb();
+      sendJson(res, 200, { imageUrl: fallback, imageKey, cached: false, fallback: true, reason: "generation_failed" });
+    }
     return;
   }
 
@@ -237,6 +299,15 @@ function requireAdminSession(req) {
   }
 }
 
+function isAdminAuthorized(req) {
+  try {
+    requireAdminSession(req);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function validateAdminCredentials(body) {
   const username = normalizeUsername(body?.username);
   const passwordHash = sha256(String(body?.password || ""));
@@ -343,6 +414,161 @@ function normalizeImage(value) {
   return image.slice(0, 2_000_000);
 }
 
+function normalizeImageListingInput(value) {
+  const input = value && typeof value === "object" ? value : {};
+  return {
+    title: normalizeLooseText(input.title, 120, "Generated Product"),
+    category: normalizeLooseText(input.category, 40, "Tech"),
+    features: Array.isArray(input.features) ? input.features.map((item) => normalizeLooseText(item, 80, "")).filter(Boolean).slice(0, 6) : [],
+    rarity: normalizeLooseText(input.rarity, 20, "common")
+  };
+}
+
+function normalizeDayKey(value) {
+  const raw = String(value || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function normalizeImageKey(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 120);
+  if (key) return key;
+  return `img_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+}
+
+function normalizeLooseText(value, maxLen, fallback) {
+  const text = String(value || "").trim().slice(0, maxLen);
+  return text || fallback;
+}
+
+function buildImageKey(listing, dayKey) {
+  const base = `${listing.title}|${listing.category}|${(listing.features || []).join("|")}|${dayKey}`;
+  return `img_${sha256(base).slice(0, 20)}`;
+}
+
+function fallbackImageForCategory(category) {
+  const key = String(category || "tech").toLowerCase();
+  if (key.includes("home")) return `${AUTO_IMAGE_FALLBACK_BASE}/home/home-01.svg`;
+  if (key.includes("beauty")) return `${AUTO_IMAGE_FALLBACK_BASE}/beauty/beauty-01.svg`;
+  if (key.includes("fitness")) return `${AUTO_IMAGE_FALLBACK_BASE}/fitness/fitness-01.svg`;
+  if (key.includes("gaming")) return `${AUTO_IMAGE_FALLBACK_BASE}/gaming/gaming-01.svg`;
+  return `${AUTO_IMAGE_FALLBACK_BASE}/tech/tech-01.svg`;
+}
+
+function isFallbackImagePath(imageUrl) {
+  const url = String(imageUrl || "");
+  return url.startsWith("public/images/catalog/");
+}
+
+function sanitizeImageText(text) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  return words
+    .map((word) => {
+      const stripped = word.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (KNOWN_BRANDS.has(stripped)) return "generic";
+      return word;
+    })
+    .join(" ")
+    .slice(0, 220);
+}
+
+function categoryStyle(category) {
+  const key = String(category || "").toLowerCase();
+  if (key.includes("home")) return "home goods item, fabric/wood/metal realistic textures";
+  if (key.includes("beauty")) return "cosmetic container or beauty tool, clean minimal design";
+  if (key.includes("fitness")) return "fitness accessory, rubber/foam textures, sporty look";
+  if (key.includes("gaming")) return "gaming accessory, subtle RGB accent glow, no text";
+  return "modern consumer electronics, matte plastic and aluminum, subtle details";
+}
+
+function rarityStyle(rarity) {
+  const key = String(rarity || "").toLowerCase();
+  if (key === "epic" || key === "legendary" || key === "mythic") {
+    return "premium materials, subtle cinematic accent lighting, still realistic";
+  }
+  if (key === "rare") return "slightly premium materials and finish";
+  return "standard realistic product finish";
+}
+
+function buildImagePrompt(listing) {
+  const safeTitle = sanitizeImageText(listing.title);
+  const safeFeatures = (listing.features || []).map(sanitizeImageText).filter(Boolean).slice(0, 6);
+  const styleBase = "High-quality studio product photography of a single generic product on a clean background, soft diffused lighting, realistic shadows, centered composition, 1:1 square, ultra sharp, no text, no logo, no watermark, no brand marks, no packaging text.";
+  const cat = categoryStyle(listing.category);
+  const rare = rarityStyle(listing.rarity);
+  const featureHints = safeFeatures.length ? `Visual hints: ${safeFeatures.join(", ")}.` : "";
+  return `${styleBase} Product: ${safeTitle}. Category style: ${cat}. Material quality: ${rare}. ${featureHints}`.trim();
+}
+
+async function generateAndStoreProductImage({ listing, imageKey, dayKey }) {
+  const prompt = buildImagePrompt(listing);
+  const negativePrompt = "no text, no letters, no words, no logos, no watermark, no brand, no human hands, no face, no messy background, no multiple products";
+
+  // Try a richer payload first, then fall back to a minimal request for compatibility.
+  const firstPayload = {
+    model: IMAGE_MODEL,
+    prompt,
+    size: "1024x1024",
+    n: 1,
+    response_format: "b64_json",
+    ...(negativePrompt ? { negative_prompt: negativePrompt } : {})
+  };
+  let response = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify(firstPayload)
+  });
+
+  if (!response.ok) {
+    const minimalPayload = {
+      model: IMAGE_MODEL,
+      prompt,
+      size: "1024x1024",
+      n: 1
+    };
+    response = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`
+      },
+      body: JSON.stringify(minimalPayload)
+    });
+  }
+
+  if (!response.ok) {
+    const txt = await response.text().catch(() => "");
+    throw new Error(`image_api_failed:${response.status}:${txt.slice(0, 240)}`);
+  }
+
+  const data = await response.json();
+  const b64 = data?.data?.[0]?.b64_json || "";
+  const hostedUrl = data?.data?.[0]?.url || "";
+  if (!b64 && !hostedUrl) throw new Error("image_api_no_payload");
+
+  if (b64) {
+    const dir = path.join(GENERATED_DIR, dayKey);
+    await fs.mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, `${imageKey}.jpg`);
+    await fs.writeFile(filePath, Buffer.from(b64, "base64"));
+    return {
+      imageUrl: `public/generated-products/${dayKey}/${imageKey}.jpg`,
+      prompt
+    };
+  }
+  return {
+    imageUrl: String(hostedUrl),
+    prompt
+  };
+}
+
 function cleanupSessions() {
   db.sessions = db.sessions.filter((item) => Number(item.expiresAt) > Date.now());
 }
@@ -427,10 +653,11 @@ async function loadDb() {
     return {
       listings: Array.isArray(parsed.listings) ? parsed.listings : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-      userProgress: parsed.userProgress && typeof parsed.userProgress === "object" ? parsed.userProgress : {}
+      userProgress: parsed.userProgress && typeof parsed.userProgress === "object" ? parsed.userProgress : {},
+      generatedImages: parsed.generatedImages && typeof parsed.generatedImages === "object" ? parsed.generatedImages : {}
     };
   } catch {
-    const empty = { listings: [], sessions: [], userProgress: {} };
+    const empty = { listings: [], sessions: [], userProgress: {}, generatedImages: {} };
     await fs.writeFile(DB_PATH, JSON.stringify(empty, null, 2), "utf8");
     return empty;
   }

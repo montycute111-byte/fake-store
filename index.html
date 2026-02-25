@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260225d" />
+    <link rel="stylesheet" href="styles.css?v=20260225e" />
   </head>
   <body>
     <header class="topbar">
@@ -33,7 +33,7 @@
       <button id="creditsTabBtn" class="tab-btn" type="button">Add Funds</button>
       <button id="collectionTabBtn" class="tab-btn" type="button">Collection</button>
       <button id="trackingTabBtn" class="tab-btn" type="button">Track Packages</button>
-      <button id="jobsTabBtn" class="tab-btn" type="button">Daily Jobs</button>
+      <button id="bankTabBtn" class="tab-btn" type="button">Bank</button>
       <button id="statsTabBtn" class="tab-btn" type="button">Stats</button>
       <button id="friendsTabBtn" class="tab-btn" type="button">Friends</button>
       <button id="tradesTabBtn" class="tab-btn" type="button">Trades</button>
@@ -51,7 +51,7 @@
             <div class="wallet-actions">
               <button id="openCreditsBtn" type="button">add funds</button>
             </div>
-            <p class="hint">Start at $0, then use the Add Funds tab.</p>
+            <p class="hint">Earn through Bank jobs, daily bonus, and hourly interest.</p>
           </section>
 
           <section>
@@ -143,18 +143,13 @@
     <section id="creditsView" class="panel hidden">
       <header class="credits-head">
         <h2>Add Funds</h2>
-        <p>Run a timer and collect free funds.</p>
+        <p>Manage utility account items and admin tools.</p>
       </header>
       <p id="creditsUserLabel" class="hint"></p>
       <p class="money-label">Current Balance</p>
       <p id="creditsBalance" class="money-value">$0.00</p>
       <section class="fund-timer">
-        <p class="hint">5-Minute Reward</p>
-        <p id="reward5minStatus" class="hint">Sign in to claim.</p>
-        <p id="reward5minCountdown" class="money-value">Ready</p>
-        <button id="reward5minClaimBtn" type="button">Claim 5-Min Reward</button>
-        <p id="reward5minLast" class="hint">Last reward: $0.00</p>
-        <p id="reward5minToday" class="hint">Today's 5-min total: $0.00 / $1,200.00</p>
+        <p class="hint"><strong>Earnings moved to Bank.</strong> Use the Bank tab for jobs, daily bonus, and account progression.</p>
       </section>
       <p id="creditsMsg" class="success-msg" aria-live="polite"></p>
 
@@ -208,15 +203,47 @@
       <div id="trackingList" class="tracking-list"></div>
     </section>
 
-    <section id="jobsView" class="panel hidden">
+    <section id="bankView" class="panel hidden">
       <header class="credits-head">
-        <h2>Daily Jobs</h2>
-        <p>Accept one job at a time, wait for completion, then claim payout.</p>
+        <h2>Bank</h2>
+        <p>Accept one job at a time, wait, then claim your payout.</p>
       </header>
-      <article id="jobsActiveCard" class="jobs-active-card hidden"></article>
-      <p id="jobsMeta" class="hint"></p>
-      <p id="jobsMsg" class="success-msg" aria-live="polite"></p>
-      <div id="jobsList" class="jobs-list"></div>
+      <p id="bankMsg" class="success-msg" aria-live="polite"></p>
+      <section class="bank-grid">
+        <article class="bank-balance-card">
+          <p class="hint">Balance</p>
+          <p id="bankBalance" class="money-value">$0.00</p>
+          <p class="hint">Level <strong id="bankLevel">1</strong> • Reputation <strong id="bankReputation">0</strong></p>
+          <div class="bank-xp-wrap">
+            <div class="bank-xp-track">
+              <div id="bankXpFill" class="bank-xp-fill"></div>
+            </div>
+            <p id="bankXpLabel" class="hint">XP 0 / 40</p>
+          </div>
+        </article>
+        <article class="bank-bonus-card">
+          <p class="hint">Daily Bonus</p>
+          <button id="bankDailyBonusBtn" type="button">Claim Daily Bonus</button>
+          <p id="bankDailyBonusStatus" class="hint">Ready</p>
+          <label class="checkbox-row">
+            <input id="bankRiskToggle" type="checkbox" />
+            <span>
+              <strong>Show Risky Jobs</strong>
+              <small>Higher variance outcomes, includes failure cases.</small>
+            </span>
+          </label>
+        </article>
+      </section>
+      <article id="bankActiveJobCard" class="jobs-active-card"></article>
+      <p id="bankCooldown" class="hint"></p>
+      <section>
+        <h3>Job Board</h3>
+        <div id="bankJobBoard" class="jobs-list"></div>
+      </section>
+      <section>
+        <h3>Recent Transactions</h3>
+        <div id="bankTxLog" class="admin-listings"></div>
+      </section>
     </section>
 
     <section id="statsView" class="panel hidden">
@@ -366,6 +393,6 @@
       </div>
     </section>
 
-  <script src="app.js?v=20260225d"></script>
+  <script src="app.js?v=20260225f"></script>
 </body>
 </html>

@@ -209,6 +209,13 @@ label {
   gap: 0.5rem;
 }
 
+.friends-subtabs {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
 .product-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
@@ -238,6 +245,18 @@ label {
   line-height: 1.3;
 }
 
+.product-sub {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.product-desc {
+  color: #33435f;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  min-height: 2.25em;
+}
+
 .new-drop-badge {
   display: inline-block;
   margin-left: 0.35rem;
@@ -256,6 +275,8 @@ label {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
 }
 
 .rating {
@@ -381,6 +402,14 @@ label {
   font-size: 1.7rem;
 }
 
+.preview-features {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #2f415d;
+  display: grid;
+  gap: 0.25rem;
+}
+
 .preview-reviews {
   margin-top: 0.9rem;
   border-top: 1px solid var(--line);
@@ -452,6 +481,11 @@ label {
 }
 
 #creditsView {
+  display: grid;
+  gap: 0.8rem;
+}
+
+#bankView {
   display: grid;
   gap: 0.8rem;
 }
@@ -707,6 +741,106 @@ label {
   gap: 0.6rem;
 }
 
+.jobs-active-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.8rem;
+  margin-bottom: 0.6rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  display: grid;
+  gap: 0.45rem;
+}
+
+.jobs-active-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.jobs-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.7rem;
+}
+
+.bank-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.7rem;
+}
+
+.bank-balance-card,
+.bank-bonus-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.45rem;
+  background: #fbfdff;
+}
+
+.bank-xp-wrap {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.bank-xp-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: #dfe8f7;
+  overflow: hidden;
+}
+
+.bank-xp-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #1f6ed4, #28a265);
+}
+
+.jobs-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.45rem;
+  background: #fbfdff;
+}
+
+.jobs-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.jobs-difficulty {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.75rem;
+  padding: 0.12rem 0.45rem;
+  font-weight: 700;
+}
+
+.jobs-difficulty.easy {
+  background: #e9fff1;
+  color: #1f7a40;
+  border-color: #b9e5c9;
+}
+
+.jobs-difficulty.medium {
+  background: #fff6e2;
+  color: #9a6400;
+  border-color: #f0d8a1;
+}
+
+.jobs-difficulty.hard {
+  background: #ffecec;
+  color: #9e2020;
+  border-color: #efb8b8;
+}
+
 .tracking-card {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -805,6 +939,15 @@ label {
 
 .admin-form button {
   height: 44px;
+}
+
+.admin-catalog-tools {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbff;
 }
 
 .admin-listings {
@@ -978,6 +1121,10 @@ label {
 
 
   .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .jobs-list {
     grid-template-columns: 1fr;
   }
 }

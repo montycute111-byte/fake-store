@@ -39,21 +39,18 @@ const AGE_ID_PRICE = 75;
 const SELL_TAX_RATE = 0.05;
 const SELL_CAP = 50000;
 const MYTHIC_SELL_COOLDOWN_MS = 2 * 60 * 1000;
-const REWARD5_MIN_COOLDOWN_MS = 5 * 60 * 1000;
-const REWARD5_MIN_DAILY_CAP = 1200;
-const REWARD5_MIN_TIERS = [
-  { key: "common", min: 5, max: 15, weight: 55 },
-  { key: "uncommon", min: 16, max: 35, weight: 25 },
-  { key: "rare", min: 36, max: 70, weight: 12 },
-  { key: "epic", min: 71, max: 120, weight: 6 },
-  { key: "legendary", min: 121, max: 250, weight: 2 }
-];
-const JOB_DAILY_EARNINGS_CAP = 1000;
-const JOB_CLAIM_COOLDOWN_MS = 10 * 60 * 1000;
-const JOB_MIN_DURATION_MINUTES = 2;
-const JOB_MAX_DURATION_MINUTES = 30;
-const JOB_MIN_PAYOUT = 20;
-const JOB_MAX_PAYOUT = 400;
+const BANK_JOB_COOLDOWN_MS = 5 * 60 * 1000;
+const BANK_DAILY_BONUS_MIN = 300;
+const BANK_DAILY_BONUS_MAX = 700;
+const BANK_INTEREST_INTERVAL_MS = 60 * 60 * 1000;
+const BANK_INTEREST_RATE = 0.01;
+const BANK_INTEREST_CAP = 5000;
+const BANK_TIME_MULTIPLIER_CAP = 6;
+const BANK_LEVEL_MULTIPLIER_CAP = 2.5;
+const BANK_TX_LOG_LIMIT = 25;
+const BANK_TX_LOG_VIEW_LIMIT = 10;
+const BANK_MID_TIER_LEVEL = 3;
+const BANK_RISKY_TIER_LEVEL = 7;
 const P2P_DAILY_CAP = 3000;
 const P2P_TX_CAP = 1000;
 const P2P_COOLDOWN_MS = 30 * 1000;
@@ -145,19 +142,47 @@ const AUTO_CATALOG_IMAGE_FILES = {
   fitness: ["fitness-01.svg", "fitness-02.svg", "fitness-03.svg", "fitness-04.svg", "fitness-05.svg", "fitness-06.svg"],
   gaming: ["gaming-01.svg", "gaming-02.svg", "gaming-03.svg", "gaming-04.svg", "gaming-05.svg", "gaming-06.svg"]
 };
-const JOB_POOL = [
-  { title: "Stock Shelf Reset", description: "Re-organize incoming items and reset shelf labels." },
-  { title: "Package Scan Shift", description: "Scan outgoing packages and verify tracking IDs." },
-  { title: "Cart Recovery Calls", description: "Contact shoppers who abandoned carts and offer support." },
-  { title: "Returns Processing", description: "Inspect return requests and restock valid inventory." },
-  { title: "Warehouse Sweep", description: "Audit aisle locations and clean pick-paths for speed." },
-  { title: "Priority Packing", description: "Pack express orders with fragile-safe wrapping." },
-  { title: "Listing Quality Check", description: "Review listing details and image quality for trust." },
-  { title: "Support Desk Queue", description: "Answer customer messages and resolve delivery issues." },
-  { title: "Price Tag Update", description: "Apply dynamic price tags based on market trends." },
-  { title: "Night Cycle Inventory", description: "Count overnight stock and reconcile differences." },
-  { title: "Fraud Flag Review", description: "Inspect suspicious orders and clear valid transactions." },
-  { title: "Driver Dispatch Assist", description: "Assign routes and confirm pickup readiness." }
+const BANK_JOB_CATALOG = [
+  { id: "data_entry", title: "Data Entry", durationMin: 2, basePay: 40, tier: "beginner" },
+  { id: "deliver_package", title: "Deliver Package", durationMin: 5, basePay: 90, tier: "beginner" },
+  { id: "fast_food_shift", title: "Fast Food Shift", durationMin: 10, basePay: 180, tier: "beginner" },
+  { id: "warehouse_shift", title: "Warehouse Shift", durationMin: 30, basePay: 700, tier: "mid" },
+  { id: "delivery_route", title: "Delivery Route", durationMin: 45, basePay: 1100, tier: "mid" },
+  { id: "night_shift", title: "Night Shift", durationMin: 60, basePay: 1500, tier: "mid" },
+  {
+    id: "crypto_trading",
+    title: "Crypto Trading",
+    durationMin: 20,
+    basePay: 0,
+    tier: "risky",
+    riskType: "weighted_random",
+    riskParams: {
+      outcomes: [
+        { min: 0, max: 200, weight: 45, label: "small gain" },
+        { min: 201, max: 600, weight: 30, label: "steady gain" },
+        { min: 601, max: 1500, weight: 18, label: "strong gain" },
+        { min: 1501, max: 5000, weight: 7, label: "jackpot" }
+      ]
+    }
+  },
+  {
+    id: "investment_flip",
+    title: "Investment Flip",
+    durationMin: 60,
+    basePay: 900,
+    tier: "risky",
+    riskType: "double_or_loss",
+    riskParams: { winWeight: 65, lossPct: 0.3 }
+  },
+  {
+    id: "high_stakes_contract",
+    title: "High Stakes Contract",
+    durationMin: 120,
+    basePay: 2600,
+    tier: "risky",
+    riskType: "fail_chance",
+    riskParams: { failChance: 0.22, failPenaltyPct: 0 }
+  }
 ];
 let firestoreDb = null;
 let firestoreUnsubscribeListings = null;
@@ -200,7 +225,7 @@ const ui = {
   creditsTabBtn: document.querySelector("#creditsTabBtn"),
   collectionTabBtn: document.querySelector("#collectionTabBtn"),
   trackingTabBtn: document.querySelector("#trackingTabBtn"),
-  jobsTabBtn: document.querySelector("#jobsTabBtn"),
+  bankTabBtn: document.querySelector("#bankTabBtn"),
   statsTabBtn: document.querySelector("#statsTabBtn"),
   friendsTabBtn: document.querySelector("#friendsTabBtn"),
   tradesTabBtn: document.querySelector("#tradesTabBtn"),
@@ -223,11 +248,20 @@ const ui = {
   collectionGrid: document.querySelector("#collectionGrid"),
   trackingView: document.querySelector("#trackingView"),
   trackingList: document.querySelector("#trackingList"),
-  jobsView: document.querySelector("#jobsView"),
-  jobsActiveCard: document.querySelector("#jobsActiveCard"),
-  jobsMeta: document.querySelector("#jobsMeta"),
-  jobsMsg: document.querySelector("#jobsMsg"),
-  jobsList: document.querySelector("#jobsList"),
+  bankView: document.querySelector("#bankView"),
+  bankMsg: document.querySelector("#bankMsg"),
+  bankBalance: document.querySelector("#bankBalance"),
+  bankLevel: document.querySelector("#bankLevel"),
+  bankReputation: document.querySelector("#bankReputation"),
+  bankXpFill: document.querySelector("#bankXpFill"),
+  bankXpLabel: document.querySelector("#bankXpLabel"),
+  bankDailyBonusBtn: document.querySelector("#bankDailyBonusBtn"),
+  bankDailyBonusStatus: document.querySelector("#bankDailyBonusStatus"),
+  bankRiskToggle: document.querySelector("#bankRiskToggle"),
+  bankActiveJobCard: document.querySelector("#bankActiveJobCard"),
+  bankCooldown: document.querySelector("#bankCooldown"),
+  bankJobBoard: document.querySelector("#bankJobBoard"),
+  bankTxLog: document.querySelector("#bankTxLog"),
   statsView: document.querySelector("#statsView"),
   friendsView: document.querySelector("#friendsView"),
   tradesView: document.querySelector("#tradesView"),
@@ -271,11 +305,6 @@ const ui = {
   creditsUserLabel: document.querySelector("#creditsUserLabel"),
   creditsBalance: document.querySelector("#creditsBalance"),
   creditsMsg: document.querySelector("#creditsMsg"),
-  reward5minStatus: document.querySelector("#reward5minStatus"),
-  reward5minCountdown: document.querySelector("#reward5minCountdown"),
-  reward5minClaimBtn: document.querySelector("#reward5minClaimBtn"),
-  reward5minLast: document.querySelector("#reward5minLast"),
-  reward5minToday: document.querySelector("#reward5minToday"),
   idStatus: document.querySelector("#idStatus"),
   buyIdBtn: document.querySelector("#buyIdBtn"),
   adminPanel: document.querySelector("#adminPanel"),
@@ -358,8 +387,8 @@ function bindEvents() {
   ui.trackingTabBtn.addEventListener("click", () => {
     switchTab("tracking");
   });
-  ui.jobsTabBtn.addEventListener("click", () => {
-    switchTab("jobs");
+  ui.bankTabBtn.addEventListener("click", () => {
+    switchTab("bank");
   });
   ui.statsTabBtn.addEventListener("click", () => {
     switchTab("stats");
@@ -371,9 +400,19 @@ function bindEvents() {
     switchTab("trades");
   });
 
-  ui.reward5minClaimBtn.addEventListener("click", handleClaim5MinReward);
   if (ui.buyIdBtn) {
     ui.buyIdBtn.addEventListener("click", handleBuyAgeId);
+  }
+  if (ui.bankDailyBonusBtn) {
+    ui.bankDailyBonusBtn.addEventListener("click", claimDailyBonus);
+  }
+  if (ui.bankRiskToggle) {
+    ui.bankRiskToggle.addEventListener("change", () => {
+      const state = loadUserBankState();
+      state.showRiskyJobs = ui.bankRiskToggle.checked === true;
+      saveUserBankState(state);
+      renderJobBoard(state);
+    });
   }
 
   ui.closePreviewBtn.addEventListener("click", closeListingPreview);
@@ -442,8 +481,12 @@ function bindEvents() {
   });
   ui.deliveryPopupClose.addEventListener("click", hideDeliveryPopup);
   ui.collectionGrid.addEventListener("click", handleCollectionAction);
-  ui.jobsList.addEventListener("click", handleJobsAction);
-  ui.jobsActiveCard.addEventListener("click", handleJobsAction);
+  if (ui.bankJobBoard) {
+    ui.bankJobBoard.addEventListener("click", handleBankAction);
+  }
+  if (ui.bankActiveJobCard) {
+    ui.bankActiveJobCard.addEventListener("click", handleBankAction);
+  }
   window.addEventListener("storage", handleStorageSync);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
@@ -456,11 +499,11 @@ function bindEvents() {
 }
 
 function switchTab(tab) {
-  if ((tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats" || tab === "friends" || tab === "trades") && !ensureSignedIn("Sign in first to continue.")) {
+  if ((tab === "credits" || tab === "collection" || tab === "tracking" || tab === "bank" || tab === "stats" || tab === "friends" || tab === "trades") && !ensureSignedIn("Sign in first to continue.")) {
     return;
   }
 
-  activeTab = tab === "credits" || tab === "collection" || tab === "tracking" || tab === "jobs" || tab === "stats" || tab === "friends" || tab === "trades" ? tab : "store";
+  activeTab = tab === "credits" || tab === "collection" || tab === "tracking" || tab === "bank" || tab === "stats" || tab === "friends" || tab === "trades" ? tab : "store";
   if (activeTab === "store") {
     ensureAutoCatalogFresh().catch((error) => {
       console.error("[AutoCatalog] store refresh failed:", error);
@@ -481,7 +524,7 @@ function switchTab(tab) {
   renderCreditsShop();
   renderCollection();
   renderTracking();
-  renderDailyJobs();
+  renderBank();
   renderStats();
   renderFriends();
   renderTrades();
@@ -492,7 +535,7 @@ function renderTabState() {
   const creditsActive = activeTab === "credits";
   const collectionActive = activeTab === "collection";
   const trackingActive = activeTab === "tracking";
-  const jobsActive = activeTab === "jobs";
+  const bankActive = activeTab === "bank";
   const statsActive = activeTab === "stats";
   const friendsActive = activeTab === "friends";
   const tradesActive = activeTab === "trades";
@@ -501,7 +544,7 @@ function renderTabState() {
   ui.creditsView.classList.toggle("hidden", !creditsActive);
   ui.collectionView.classList.toggle("hidden", !collectionActive);
   ui.trackingView.classList.toggle("hidden", !trackingActive);
-  ui.jobsView.classList.toggle("hidden", !jobsActive);
+  ui.bankView.classList.toggle("hidden", !bankActive);
   ui.statsView.classList.toggle("hidden", !statsActive);
   ui.friendsView.classList.toggle("hidden", !friendsActive);
   ui.tradesView.classList.toggle("hidden", !tradesActive);
@@ -509,7 +552,7 @@ function renderTabState() {
   ui.creditsTabBtn.classList.toggle("active", creditsActive);
   ui.collectionTabBtn.classList.toggle("active", collectionActive);
   ui.trackingTabBtn.classList.toggle("active", trackingActive);
-  ui.jobsTabBtn.classList.toggle("active", jobsActive);
+  ui.bankTabBtn.classList.toggle("active", bankActive);
   ui.statsTabBtn.classList.toggle("active", statsActive);
   ui.friendsTabBtn.classList.toggle("active", friendsActive);
   ui.tradesTabBtn.classList.toggle("active", tradesActive);
@@ -542,7 +585,7 @@ function renderAll() {
   renderListingPreview();
   renderCollection();
   renderTracking();
-  renderDailyJobs();
+  renderBank();
   renderStats();
   renderFriends();
   renderTrades();
@@ -608,6 +651,7 @@ function addMoney(amount, reason = "unknown", meta = {}) {
 async function syncCurrentUserEconomyToFirestore() {
   const user = getCurrentUser();
   if (!firestoreDb || !user) return;
+  const state = loadUserBankState();
   await firestoreDb
     .collection("users")
     .doc(String(user.id))
@@ -616,7 +660,19 @@ async function syncCurrentUserEconomyToFirestore() {
         uid: String(user.id),
         username: String(user.username),
         usernameLower: String(user.username).toLowerCase(),
-        balance: round2(Number(user.progress?.balance) || 0),
+        balance: round2(Number(state.bankBalance) || 0),
+        bankBalance: round2(Number(state.bankBalance) || 0),
+        bankLevel: Math.max(1, Math.floor(Number(state.bankLevel) || 1)),
+        bankXP: Math.max(0, Math.floor(Number(state.bankXP) || 0)),
+        reputation: Math.floor(Number(state.reputation) || 0),
+        activeJobId: state.activeJobId ? String(state.activeJobId) : null,
+        jobAcceptedAt: Number(state.jobAcceptedAt) > 0 ? Number(state.jobAcceptedAt) : null,
+        jobFinishAt: Number(state.jobFinishAt) > 0 ? Number(state.jobFinishAt) : null,
+        jobCooldownUntil: Number(state.jobCooldownUntil) > 0 ? Number(state.jobCooldownUntil) : null,
+        lastDailyBonusAt: Number(state.lastDailyBonusAt) > 0 ? Number(state.lastDailyBonusAt) : null,
+        lastInterestAt: Number(state.lastInterestAt) > 0 ? Number(state.lastInterestAt) : null,
+        txLog: normalizeBankTxLog(state.txLog).slice(0, BANK_TX_LOG_LIMIT),
+        showRiskyJobs: state.showRiskyJobs === true,
         updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
       },
       { merge: true }
@@ -628,11 +684,6 @@ function renderCreditsShop() {
   if (!user) {
     ui.creditsUserLabel.textContent = "No active account.";
     ui.creditsBalance.textContent = "$0.00";
-    ui.reward5minClaimBtn.disabled = true;
-    ui.reward5minStatus.textContent = "Sign in to claim.";
-    ui.reward5minCountdown.textContent = "Ready";
-    ui.reward5minLast.textContent = "Last reward: $0.00";
-    ui.reward5minToday.textContent = `Today's 5-min total: $0.00 / ${money(REWARD5_MIN_DAILY_CAP)}`;
     if (ui.buyIdBtn) {
       ui.buyIdBtn.disabled = true;
       ui.buyIdBtn.textContent = `Buy 21+ ID (${money(AGE_ID_PRICE)})`;
@@ -648,7 +699,6 @@ function renderCreditsShop() {
   ui.creditsUserLabel.textContent = `Signed in as @${user.username}`;
   ui.creditsBalance.textContent = money(Number(user.progress.balance) || 0);
   renderAgeIdShop(user.progress);
-  renderFiveMinuteReward(user.progress);
 
   if (isAdminUser(user)) {
     ui.adminPanel.classList.remove("hidden");
@@ -686,9 +736,7 @@ function startFundTimerTicker() {
   fundTimerIntervalId = setInterval(() => {
     const progress = getProgressOrNull();
     if (!progress) return;
-    if (activeTab === "credits") {
-      renderFiveMinuteReward(progress);
-    }
+    applyInterestIfEligible(loadUserBankState());
     checkForDeliveredItems();
     if (activeTab === "collection") {
       renderCollection();
@@ -696,8 +744,8 @@ function startFundTimerTicker() {
     if (activeTab === "tracking") {
       renderTracking();
     }
-    if (activeTab === "jobs") {
-      renderDailyJobs();
+    if (activeTab === "bank") {
+      renderBank();
     }
     if (activeTab === "stats") {
       renderStats();
@@ -1039,12 +1087,7 @@ function pickCatalogImageUrl(imageKey, dayKey, index, title) {
 }
 
 function fallbackImageForCategory(category) {
-  const key = String(category || "tech").toLowerCase();
-  if (key.includes("home")) return "/public/images/catalog/home/home-01.svg";
-  if (key.includes("beauty")) return "/public/images/catalog/beauty/beauty-01.svg";
-  if (key.includes("fitness")) return "/public/images/catalog/fitness/fitness-01.svg";
-  if (key.includes("gaming")) return "/public/images/catalog/gaming/gaming-01.svg";
-  return "/public/images/catalog/tech/tech-01.svg";
+  return buildStockPhotoUrl(String(category || "product"));
 }
 
 function buildListingImageKey(listing, dayKey, versionSuffix = "") {
@@ -1244,116 +1287,6 @@ function handleBuyAgeId() {
   renderStats();
   renderProducts();
   renderListingPreview();
-}
-
-function handleClaim5MinReward() {
-  const progress = getProgressOrNull();
-  if (!progress && !ensureSignedIn("Sign in first to claim 5-minute rewards.")) return;
-  const nextProgress = getProgressOrNull();
-  if (!nextProgress) return;
-
-  const state = ensureFiveMinuteRewardState(nextProgress);
-  const now = Date.now();
-  const remainingCooldown = Math.max(0, Number(state.nextClaimAt || 0) - now);
-  const todayRemaining = Math.max(0, REWARD5_MIN_DAILY_CAP - (Number(state.todayTotal5minRewards) || 0));
-
-  if (todayRemaining <= 0) {
-    setFundMessage("Daily cap reached for 5-minute rewards.", true);
-    renderFiveMinuteReward(nextProgress);
-    return;
-  }
-  if (remainingCooldown > 0) {
-    setFundMessage(`Ready in ${formatCountdown(remainingCooldown)}.`, true);
-    renderFiveMinuteReward(nextProgress);
-    return;
-  }
-
-  const tier = pickWeightedTier();
-  const rolledAmount = randomInt(tier.min, tier.max);
-  const payout = Math.max(0, Math.min(rolledAmount, todayRemaining));
-  if (payout <= 0) {
-    setFundMessage("Daily cap reached for 5-minute rewards.", true);
-    renderFiveMinuteReward(nextProgress);
-    return;
-  }
-
-  addMoney(payout, "5min_reward", { tier: tier.key });
-  state.lastClaimAt = now;
-  state.nextClaimAt = now + REWARD5_MIN_COOLDOWN_MS;
-  state.lastRewardAmount = payout;
-  state.todayTotal5minRewards = round2((Number(state.todayTotal5minRewards) || 0) + payout);
-  state.claimHistory.unshift({
-    ts: new Date(now).toISOString(),
-    amount: payout,
-    tier: tier.key
-  });
-  state.claimHistory = state.claimHistory.slice(0, 10);
-
-  persistDb();
-  setFundMessage(`Reward claimed: ${money(payout)} (${tier.key}).`);
-  renderWallet();
-  renderCreditsShop();
-  renderStats();
-}
-
-function renderFiveMinuteReward(progress) {
-  const state = ensureFiveMinuteRewardState(progress);
-  const now = Date.now();
-  const remainingCooldown = Math.max(0, Number(state.nextClaimAt || 0) - now);
-  const todayTotal = round2(Number(state.todayTotal5minRewards) || 0);
-  const capRemaining = Math.max(0, REWARD5_MIN_DAILY_CAP - todayTotal);
-  const canClaim = remainingCooldown <= 0 && capRemaining > 0;
-
-  ui.reward5minClaimBtn.disabled = !canClaim;
-  ui.reward5minCountdown.textContent = canClaim ? "Ready" : formatCountdown(remainingCooldown);
-  ui.reward5minStatus.textContent = capRemaining <= 0
-    ? "Daily cap reached."
-    : canClaim
-      ? "Reward ready to claim."
-      : `Next reward in ${formatCountdown(remainingCooldown)}.`;
-  ui.reward5minLast.textContent = `Last reward: ${money(Number(state.lastRewardAmount) || 0)}`;
-  ui.reward5minToday.textContent = `Today's 5-min total: ${money(todayTotal)} / ${money(REWARD5_MIN_DAILY_CAP)}`;
-}
-
-function ensureFiveMinuteRewardState(progress) {
-  const todayKey = getTodayKey();
-  if (!progress.fiveMinReward || typeof progress.fiveMinReward !== "object") {
-    progress.fiveMinReward = {
-      todayKey,
-      lastClaimAt: null,
-      nextClaimAt: null,
-      todayTotal5minRewards: 0,
-      lastRewardAmount: 0,
-      claimHistory: []
-    };
-    return progress.fiveMinReward;
-  }
-  const state = progress.fiveMinReward;
-  if (String(state.todayKey || "") !== todayKey) {
-    state.todayKey = todayKey;
-    state.todayTotal5minRewards = 0;
-    state.claimHistory = [];
-  }
-  state.lastClaimAt = Number(state.lastClaimAt) > 0 ? Number(state.lastClaimAt) : null;
-  state.nextClaimAt = Number(state.nextClaimAt) > 0 ? Number(state.nextClaimAt) : null;
-  state.todayTotal5minRewards = round2(Math.max(0, Number(state.todayTotal5minRewards) || 0));
-  state.lastRewardAmount = round2(Math.max(0, Number(state.lastRewardAmount) || 0));
-  state.claimHistory = Array.isArray(state.claimHistory) ? state.claimHistory.slice(0, 10) : [];
-  return state;
-}
-
-function getTodayKey(ts = Date.now()) {
-  return getTodayKeyLocal(ts);
-}
-
-function pickWeightedTier() {
-  const roll = Math.random() * 100;
-  let cumulative = 0;
-  for (const tier of REWARD5_MIN_TIERS) {
-    cumulative += Number(tier.weight || 0);
-    if (roll < cumulative) return tier;
-  }
-  return REWARD5_MIN_TIERS[REWARD5_MIN_TIERS.length - 1];
 }
 
 function randomInt(min, max) {
@@ -1718,6 +1651,7 @@ function friendsOtherUid(friendship, myUid) {
 
 async function ensureUserProfileDoc(user = getCurrentUser()) {
   if (!firestoreDb || !user) return;
+  const state = loadUserBankState();
   await firestoreDb
     .collection("users")
     .doc(String(user.id))
@@ -1726,7 +1660,19 @@ async function ensureUserProfileDoc(user = getCurrentUser()) {
         uid: String(user.id),
         username: String(user.username),
         usernameLower: String(user.username).toLowerCase(),
-        balance: round2(Number(user.progress?.balance) || 0),
+        balance: round2(Number(state.bankBalance) || 0),
+        bankBalance: round2(Number(state.bankBalance) || 0),
+        bankLevel: state.bankLevel,
+        bankXP: state.bankXP,
+        reputation: state.reputation,
+        activeJobId: state.activeJobId,
+        jobAcceptedAt: state.jobAcceptedAt,
+        jobFinishAt: state.jobFinishAt,
+        jobCooldownUntil: state.jobCooldownUntil,
+        lastDailyBonusAt: state.lastDailyBonusAt,
+        lastInterestAt: state.lastInterestAt,
+        txLog: normalizeBankTxLog(state.txLog).slice(0, BANK_TX_LOG_LIMIT),
+        showRiskyJobs: state.showRiskyJobs === true,
         createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: window.firebase.firestore.FieldValue.serverTimestamp()
       },
@@ -1740,14 +1686,29 @@ async function syncCurrentBalanceFromFirestore() {
   const snap = await firestoreDb.collection("users").doc(String(user.id)).get();
   if (!snap.exists) return;
   const data = snap.data() || {};
-  const remoteBalance = round2(Math.max(0, Number(data.balance) || 0));
-  if (remoteBalance !== round2(Number(user.progress.balance) || 0)) {
-    user.progress.balance = remoteBalance;
-    persistDb();
-    renderWallet();
-    renderCreditsShop();
-    renderStats();
-  }
+  const remoteState = normalizeBankState(
+    {
+      bankBalance: data.bankBalance ?? data.balance,
+      bankLevel: data.bankLevel,
+      bankXP: data.bankXP,
+      reputation: data.reputation,
+      activeJobId: data.activeJobId,
+      jobAcceptedAt: data.jobAcceptedAt,
+      jobFinishAt: data.jobFinishAt,
+      jobCooldownUntil: data.jobCooldownUntil,
+      lastDailyBonusAt: data.lastDailyBonusAt,
+      lastInterestAt: data.lastInterestAt,
+      txLog: data.txLog,
+      showRiskyJobs: data.showRiskyJobs
+    },
+    Number(data.balance) || Number(user.progress.balance) || 500
+  );
+  applyBankStateToProgress(user.progress, remoteState);
+  persistDb();
+  renderWallet();
+  renderCreditsShop();
+  renderBank();
+  renderStats();
 }
 
 async function refreshFriendsData() {
@@ -2646,240 +2607,514 @@ function chunkArray(values, size) {
   return out;
 }
 
-function renderDailyJobs() {
-  if (!ui.jobsList || !ui.jobsActiveCard || !ui.jobsMeta) return;
+function defaultBankState(balanceSeed = 500) {
+  const safeSeed = round2(Math.max(0, Number(balanceSeed) || 0));
+  return {
+    bankBalance: safeSeed,
+    bankLevel: 1,
+    bankXP: 0,
+    reputation: 0,
+    activeJobId: null,
+    jobAcceptedAt: null,
+    jobFinishAt: null,
+    jobCooldownUntil: null,
+    lastDailyBonusAt: null,
+    lastInterestAt: null,
+    txLog: [],
+    showRiskyJobs: false
+  };
+}
+
+function normalizeBankTxLog(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((row) => ({
+      ts: Number(row?.ts) > 0 ? Number(row.ts) : Date.now(),
+      type: String(row?.type || "event"),
+      amount: round2(Number(row?.amount) || 0),
+      meta: row?.meta && typeof row.meta === "object" ? row.meta : {}
+    }))
+    .slice(0, BANK_TX_LOG_LIMIT);
+}
+
+function normalizeBankState(raw, fallbackBalance = 500) {
+  const base = defaultBankState(fallbackBalance);
+  if (!raw || typeof raw !== "object") return base;
+  base.bankBalance = round2(Math.max(0, Number(raw.bankBalance) || 0));
+  base.bankLevel = Math.max(1, Math.floor(Number(raw.bankLevel) || 1));
+  base.bankXP = Math.max(0, Math.floor(Number(raw.bankXP) || 0));
+  base.reputation = Math.floor(Number(raw.reputation) || 0);
+  base.activeJobId = raw.activeJobId ? String(raw.activeJobId) : null;
+  base.jobAcceptedAt = Number(raw.jobAcceptedAt) > 0 ? Number(raw.jobAcceptedAt) : null;
+  base.jobFinishAt = Number(raw.jobFinishAt) > 0 ? Number(raw.jobFinishAt) : null;
+  base.jobCooldownUntil = Number(raw.jobCooldownUntil) > 0 ? Number(raw.jobCooldownUntil) : null;
+  base.lastDailyBonusAt = Number(raw.lastDailyBonusAt) > 0 ? Number(raw.lastDailyBonusAt) : null;
+  base.lastInterestAt = Number(raw.lastInterestAt) > 0 ? Number(raw.lastInterestAt) : null;
+  base.txLog = normalizeBankTxLog(raw.txLog);
+  base.showRiskyJobs = raw.showRiskyJobs === true;
+  if (base.activeJobId && !getBankJobById(base.activeJobId)) {
+    base.activeJobId = null;
+    base.jobAcceptedAt = null;
+    base.jobFinishAt = null;
+  }
+  return base;
+}
+
+function mapProgressToBankState(progress) {
+  const fallbackBalance = round2(Math.max(0, Number(progress.balance) || 500)) || 500;
+  const state = normalizeBankState(
+    {
+      bankBalance: progress.bankBalance,
+      bankLevel: progress.bankLevel,
+      bankXP: progress.bankXP,
+      reputation: progress.reputation,
+      activeJobId: progress.activeJobId,
+      jobAcceptedAt: progress.jobAcceptedAt,
+      jobFinishAt: progress.jobFinishAt,
+      jobCooldownUntil: progress.jobCooldownUntil,
+      lastDailyBonusAt: progress.lastDailyBonusAt,
+      lastInterestAt: progress.lastInterestAt,
+      txLog: progress.txLog,
+      showRiskyJobs: progress.showRiskyJobs
+    },
+    fallbackBalance
+  );
+  state.bankBalance = round2(Math.max(0, Number(progress.balance) || state.bankBalance));
+  return state;
+}
+
+function applyBankStateToProgress(progress, state) {
+  const normalized = normalizeBankState(state, Number(progress.balance) || 500);
+  progress.bankBalance = normalized.bankBalance;
+  progress.bankLevel = normalized.bankLevel;
+  progress.bankXP = normalized.bankXP;
+  progress.reputation = normalized.reputation;
+  progress.activeJobId = normalized.activeJobId;
+  progress.jobAcceptedAt = normalized.jobAcceptedAt;
+  progress.jobFinishAt = normalized.jobFinishAt;
+  progress.jobCooldownUntil = normalized.jobCooldownUntil;
+  progress.lastDailyBonusAt = normalized.lastDailyBonusAt;
+  progress.lastInterestAt = normalized.lastInterestAt;
+  progress.txLog = normalized.txLog.slice(0, BANK_TX_LOG_LIMIT);
+  progress.showRiskyJobs = normalized.showRiskyJobs === true;
+  progress.balance = round2(normalized.bankBalance);
+  return normalized;
+}
+
+function loadUserBankState() {
+  const progress = getProgressOrNull();
+  if (!progress) return defaultBankState(500);
+  return applyBankStateToProgress(progress, mapProgressToBankState(progress));
+}
+
+function saveUserBankState(state, options = {}) {
+  const progress = getProgressOrNull();
+  if (!progress) return defaultBankState(500);
+  const normalized = applyBankStateToProgress(progress, state);
+  persistDb();
+  if (!options.skipFirestoreSync) {
+    syncCurrentUserEconomyToFirestore().catch(() => {});
+  }
+  return normalized;
+}
+
+async function updateUserBankStateTransaction(claimFn) {
+  const user = getCurrentUser();
+  const progress = getProgressOrNull();
+  if (!user || !progress) throw new Error("Sign in first.");
+  if (typeof claimFn !== "function") throw new Error("Invalid claim handler.");
+  if (!firestoreDb) {
+    const localState = loadUserBankState();
+    const result = claimFn(localState, Date.now()) || {};
+    if (result.error) throw new Error(String(result.error));
+    const next = saveUserBankState(result.state || localState);
+    return { state: next, message: result.message || "" };
+  }
+
+  const ref = firestoreDb.collection("users").doc(String(user.id));
+  let commitResult = { state: loadUserBankState(), message: "" };
+  await firestoreDb.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const remote = snap.exists ? snap.data() || {} : {};
+    const merged = normalizeBankState(
+      {
+        bankBalance: remote.bankBalance,
+        bankLevel: remote.bankLevel,
+        bankXP: remote.bankXP,
+        reputation: remote.reputation,
+        activeJobId: remote.activeJobId,
+        jobAcceptedAt: remote.jobAcceptedAt,
+        jobFinishAt: remote.jobFinishAt,
+        jobCooldownUntil: remote.jobCooldownUntil,
+        lastDailyBonusAt: remote.lastDailyBonusAt,
+        lastInterestAt: remote.lastInterestAt,
+        txLog: remote.txLog,
+        showRiskyJobs: remote.showRiskyJobs
+      },
+      Number(remote.balance) || Number(progress.balance) || 500
+    );
+    const result = claimFn(merged, Date.now()) || {};
+    if (result.error) throw new Error(String(result.error));
+    const next = normalizeBankState(result.state || merged, merged.bankBalance);
+    const nowTs = Date.now();
+    tx.set(
+      ref,
+      {
+        uid: String(user.id),
+        username: String(user.username),
+        usernameLower: String(user.username).toLowerCase(),
+        balance: round2(next.bankBalance),
+        bankBalance: round2(next.bankBalance),
+        bankLevel: next.bankLevel,
+        bankXP: next.bankXP,
+        reputation: next.reputation,
+        activeJobId: next.activeJobId,
+        jobAcceptedAt: next.jobAcceptedAt,
+        jobFinishAt: next.jobFinishAt,
+        jobCooldownUntil: next.jobCooldownUntil,
+        lastDailyBonusAt: next.lastDailyBonusAt,
+        lastInterestAt: next.lastInterestAt,
+        txLog: next.txLog.slice(0, BANK_TX_LOG_LIMIT),
+        showRiskyJobs: next.showRiskyJobs === true,
+        updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAtMs: nowTs
+      },
+      { merge: true }
+    );
+    commitResult = { state: next, message: result.message || "" };
+  });
+
+  const finalState = saveUserBankState(commitResult.state, { skipFirestoreSync: true });
+  return { state: finalState, message: commitResult.message };
+}
+
+function getBankJobById(jobId) {
+  return BANK_JOB_CATALOG.find((job) => job.id === jobId) || null;
+}
+
+function getBankJobRequiredLevel(job) {
+  if (job.tier === "mid") return BANK_MID_TIER_LEVEL;
+  if (job.tier === "risky") return BANK_RISKY_TIER_LEVEL;
+  return 1;
+}
+
+function calculateJobBaseReward(job, level) {
+  const timeMultiplier = Math.min(BANK_TIME_MULTIPLIER_CAP, 1 + Number(job.durationMin || 0) / 20);
+  const levelMultiplier = Math.min(BANK_LEVEL_MULTIPLIER_CAP, 1 + Math.max(0, (Number(level) || 1) - 1) * 0.06);
+  const amount = Math.round(Math.max(0, Number(job.basePay) || 0) * timeMultiplier * levelMultiplier);
+  return Math.max(0, amount);
+}
+
+function resolveWeightedOutcome(outcomes) {
+  const total = outcomes.reduce((sum, item) => sum + Number(item?.weight || 0), 0);
+  let roll = Math.random() * total;
+  for (const item of outcomes) {
+    roll -= Number(item?.weight || 0);
+    if (roll <= 0) return item;
+  }
+  return outcomes[outcomes.length - 1];
+}
+
+function calculateJobOutcome(job, state) {
+  const baseReward = calculateJobBaseReward(job, state.bankLevel);
+  if (!job.riskType) {
+    return { amount: baseReward, meta: { outcome: "success", mode: "standard", baseReward } };
+  }
+  if (job.riskType === "weighted_random") {
+    const outcome = resolveWeightedOutcome(job.riskParams?.outcomes || [{ min: 0, max: 500, weight: 100, label: "mixed" }]);
+    const amount = randomInt(Number(outcome.min) || 0, Number(outcome.max) || 0);
+    return { amount, meta: { outcome: "success", mode: "weighted_random", label: String(outcome.label || "random") } };
+  }
+  if (job.riskType === "double_or_loss") {
+    const winWeight = clamp(Number(job.riskParams?.winWeight) || 65, 0, 100);
+    const wins = Math.random() * 100 < winWeight;
+    if (wins) {
+      return { amount: round2(baseReward * 2), meta: { outcome: "success", mode: "double_or_loss", label: "double reward" } };
+    }
+    const lossPct = clamp(Number(job.riskParams?.lossPct) || 0.3, 0, 1);
+    return { amount: round2(-baseReward * lossPct), meta: { outcome: "fail", mode: "double_or_loss", label: "loss" } };
+  }
+  if (job.riskType === "fail_chance") {
+    const failChance = clamp(Number(job.riskParams?.failChance) || 0.2, 0, 1);
+    if (Math.random() < failChance) {
+      return { amount: 0, meta: { outcome: "fail", mode: "fail_chance", label: "contract failed" } };
+    }
+    return { amount: round2(baseReward * 2.2), meta: { outcome: "success", mode: "fail_chance", label: "contract completed" } };
+  }
+  return { amount: baseReward, meta: { outcome: "success", mode: "standard" } };
+}
+
+function appendBankTx(state, type, amount, meta = {}) {
+  const next = Array.isArray(state.txLog) ? state.txLog.slice() : [];
+  next.unshift({
+    ts: Date.now(),
+    type: String(type || "event"),
+    amount: round2(Number(amount) || 0),
+    meta: meta && typeof meta === "object" ? meta : {}
+  });
+  state.txLog = next.slice(0, BANK_TX_LOG_LIMIT);
+}
+
+function applyInterestIfEligible(state, options = {}) {
+  const now = Date.now();
+  const lastAt = Number(state.lastInterestAt || 0);
+  if (lastAt > 0 && now - lastAt < BANK_INTEREST_INTERVAL_MS) return state;
+  const interest = Math.min(BANK_INTEREST_CAP, Math.max(0, Math.floor((Number(state.bankBalance) || 0) * BANK_INTEREST_RATE)));
+  if (interest <= 0) {
+    state.lastInterestAt = now;
+    return state;
+  }
+  state.bankBalance = round2((Number(state.bankBalance) || 0) + interest);
+  state.lastInterestAt = now;
+  appendBankTx(state, "interest", interest, { rate: BANK_INTEREST_RATE });
+  saveUserBankState(state, options);
+  return state;
+}
+
+function setBankMessage(message, isError = false) {
+  if (!ui.bankMsg) return;
+  ui.bankMsg.textContent = message;
+  ui.bankMsg.classList.toggle("error", isError);
+}
+
+function renderBank() {
+  if (!ui.bankView) return;
   const user = getCurrentUser();
   if (!user) {
-    ui.jobsActiveCard.classList.add("hidden");
-    ui.jobsList.innerHTML = '<p class="hint">Sign in to use Daily Jobs.</p>';
-    ui.jobsMeta.textContent = "Sign in required.";
+    ui.bankBalance.textContent = "$0.00";
+    ui.bankLevel.textContent = "1";
+    ui.bankReputation.textContent = "0";
+    ui.bankXpLabel.textContent = "XP 0 / 40";
+    ui.bankXpFill.style.width = "0%";
+    ui.bankDailyBonusBtn.disabled = true;
+    ui.bankDailyBonusStatus.textContent = "Sign in to use Bank.";
+    ui.bankActiveJobCard.innerHTML = '<p class="hint">Sign in to manage jobs.</p>';
+    ui.bankCooldown.textContent = "Sign in required.";
+    ui.bankJobBoard.innerHTML = '<p class="hint">Sign in to view jobs.</p>';
+    ui.bankTxLog.innerHTML = "";
     return;
   }
 
-  const state = ensureDailyJobsStateFresh(user);
-  const now = Date.now();
-  const capRemaining = Math.max(0, JOB_DAILY_EARNINGS_CAP - (Number(state.todayEarnings) || 0));
-  const cooldownRemainingMs = Math.max(0, Number(state.cooldownUntil || 0) - now);
-  const activeJob = state.activeJobId ? state.jobs.find((job) => job.id === state.activeJobId) : null;
-  const activeRemainingMs = activeJob ? Math.max(0, Number(state.endsAt || 0) - now) : 0;
-  const hasActive = Boolean(activeJob);
-  const readyToClaim = hasActive && activeRemainingMs <= 0 && !state.claimed;
+  const state = applyInterestIfEligible(loadUserBankState());
+  renderWallet();
+  const xpThreshold = state.bankLevel * 40;
+  const xpPct = clamp((state.bankXP / xpThreshold) * 100, 0, 100);
+  ui.bankBalance.textContent = money(state.bankBalance);
+  ui.bankLevel.textContent = String(state.bankLevel);
+  ui.bankReputation.textContent = String(state.reputation);
+  ui.bankXpLabel.textContent = `XP ${state.bankXP} / ${xpThreshold}`;
+  ui.bankXpFill.style.width = `${xpPct.toFixed(1)}%`;
+  ui.bankRiskToggle.checked = state.showRiskyJobs === true;
+  const dailyRemaining = Math.max(0, (Number(state.lastDailyBonusAt || 0) + 24 * 60 * 60 * 1000) - Date.now());
+  ui.bankDailyBonusBtn.disabled = dailyRemaining > 0;
+  ui.bankDailyBonusStatus.textContent = dailyRemaining > 0
+    ? `Next bonus in ${formatCountdown(dailyRemaining)}`
+    : "Daily bonus ready.";
+  renderActiveJob(state);
+  renderJobBoard(state);
+  renderTxLog(state);
+}
 
-  ui.jobsMeta.textContent = `Today earned: ${money(Number(state.todayEarnings) || 0)} / ${money(JOB_DAILY_EARNINGS_CAP)} • Remaining cap: ${money(capRemaining)}`;
-
-  if (hasActive) {
-    ui.jobsActiveCard.classList.remove("hidden");
-    ui.jobsActiveCard.innerHTML = `
-      <div class="jobs-active-head">
-        <strong>Active Job: ${activeJob.title}</strong>
-        <span class="jobs-difficulty ${activeJob.difficulty.toLowerCase()}">${activeJob.difficulty}</span>
-      </div>
-      <p class="hint">${activeJob.description}</p>
-      <p><strong>Payout:</strong> ${money(activeJob.payout)} • <strong>Duration:</strong> ${formatJobDuration(activeJob.durationMs)}</p>
-      <p><strong>Status:</strong> ${readyToClaim ? "Completed" : `In progress (${formatCountdown(activeRemainingMs)})`}</p>
-      ${readyToClaim ? '<button type="button" data-action="claim-job">Claim Reward</button>' : ""}
-    `;
-  } else {
-    ui.jobsActiveCard.classList.add("hidden");
-    ui.jobsActiveCard.innerHTML = "";
+function renderActiveJob(state) {
+  const job = getBankJobById(state.activeJobId);
+  if (!job) {
+    ui.bankActiveJobCard.innerHTML = '<p class="hint">No active job.</p>';
+    return;
   }
+  const now = Date.now();
+  const remaining = Math.max(0, Number(state.jobFinishAt || 0) - now);
+  const ready = remaining <= 0;
+  const finishLabel = state.jobFinishAt ? new Date(state.jobFinishAt).toLocaleTimeString() : "-";
+  ui.bankActiveJobCard.innerHTML = `
+    <div class="jobs-active-head">
+      <strong>Active Job: ${escapeHtml(job.title)}</strong>
+      <span class="jobs-difficulty ${job.tier === "risky" ? "hard" : job.tier === "mid" ? "medium" : "easy"}">${job.tier}</span>
+    </div>
+    <p class="hint">Finish time: ${finishLabel}</p>
+    <p><strong>Status:</strong> ${ready ? "Completed" : `In progress (${formatCountdown(remaining)})`}</p>
+    <button type="button" data-action="claim-job" ${ready ? "" : "disabled"}>Claim payout</button>
+  `;
+}
 
-  const acceptBlockedByCooldown = cooldownRemainingMs > 0;
-  const acceptBlockedByCap = capRemaining <= 0;
-  ui.jobsList.innerHTML = "";
-  for (const job of state.jobs) {
+function renderJobBoard(state) {
+  const now = Date.now();
+  const cooldownMs = Math.max(0, Number(state.jobCooldownUntil || 0) - now);
+  ui.bankCooldown.textContent = cooldownMs > 0 ? `Cooldown: ${formatCountdown(cooldownMs)} remaining.` : "Cooldown: Ready";
+  const hasActiveJob = Boolean(state.activeJobId);
+  ui.bankJobBoard.innerHTML = "";
+  const list = BANK_JOB_CATALOG.filter((job) => state.showRiskyJobs || job.tier !== "risky");
+  for (const job of list) {
+    const reqLevel = getBankJobRequiredLevel(job);
+    const locked = state.bankLevel < reqLevel;
+    const blocked = hasActiveJob || cooldownMs > 0 || locked;
     const card = document.createElement("article");
     card.className = "jobs-card";
-    const blockedByActive = hasActive;
-    const canAccept = !blockedByActive && !acceptBlockedByCooldown && !acceptBlockedByCap;
-    let buttonText = "Accept";
-    if (blockedByActive) buttonText = "Job Active";
-    else if (acceptBlockedByCooldown) buttonText = `Cooldown ${formatCountdown(cooldownRemainingMs)}`;
-    else if (acceptBlockedByCap) buttonText = "Daily Cap Reached";
+    const baseEst = calculateJobBaseReward(job, state.bankLevel);
+    const estimate = job.riskType
+      ? "Varies by risk outcome"
+      : `${money(baseEst)}`;
     card.innerHTML = `
       <div class="jobs-card-head">
-        <strong>${job.title}</strong>
-        <span class="jobs-difficulty ${job.difficulty.toLowerCase()}">${job.difficulty}</span>
+        <strong>${escapeHtml(job.title)}</strong>
+        <span class="jobs-difficulty ${job.tier === "risky" ? "hard" : job.tier === "mid" ? "medium" : "easy"}">${job.tier}</span>
       </div>
-      <p class="hint">${job.description}</p>
-      <p><strong>Duration:</strong> ${formatJobDuration(job.durationMs)} • <strong>Payout:</strong> ${money(job.payout)}</p>
-      <button type="button" data-action="accept-job" data-job-id="${job.id}" ${canAccept ? "" : "disabled"}>${buttonText}</button>
+      <p><strong>Duration:</strong> ${job.durationMin} min</p>
+      <p><strong>Estimated payout:</strong> ${estimate}</p>
+      <p class="hint">${locked ? `Unlocks at level ${reqLevel}.` : "Available now."}</p>
+      <button type="button" data-action="accept-job" data-job-id="${job.id}" ${blocked ? "disabled" : ""}>
+        ${locked ? `Locked (Lv ${reqLevel})` : hasActiveJob ? "Job Active" : cooldownMs > 0 ? "On Cooldown" : "Accept"}
+      </button>
     `;
-    ui.jobsList.append(card);
+    ui.bankJobBoard.append(card);
   }
 }
 
-function handleJobsAction(event) {
+function renderTxLog(state) {
+  ui.bankTxLog.innerHTML = "";
+  const rows = (state.txLog || []).slice(0, BANK_TX_LOG_VIEW_LIMIT);
+  if (!rows.length) {
+    ui.bankTxLog.innerHTML = '<p class="hint">No transactions yet.</p>';
+    return;
+  }
+  for (const row of rows) {
+    const item = document.createElement("article");
+    item.className = "admin-row";
+    const amount = Number(row.amount) || 0;
+    const sign = amount >= 0 ? "+" : "-";
+    item.innerHTML = `
+      <div class="admin-row-body">
+        <div class="admin-row-head">
+          <strong class="admin-title">${escapeHtml(String(row.type || "event").replaceAll("_", " "))}</strong>
+          <span class="admin-price">${sign}${money(Math.abs(amount))}</span>
+        </div>
+        <p class="admin-meta">${new Date(Number(row.ts) || Date.now()).toLocaleString()}</p>
+      </div>
+    `;
+    ui.bankTxLog.append(item);
+  }
+}
+
+function handleBankAction(event) {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const action = String(button.dataset.action || "");
   if (action === "accept-job") {
     const jobId = String(button.dataset.jobId || "");
-    if (!jobId) return;
-    acceptDailyJob(jobId);
+    if (jobId) acceptJob(jobId);
     return;
   }
   if (action === "claim-job") {
-    claimDailyJob();
+    claimJob().catch((error) => {
+      setBankMessage(error?.message || "Claim failed.", true);
+    });
   }
 }
 
-function acceptDailyJob(jobId) {
-  const user = getCurrentUser();
-  if (!user) {
-    ensureSignedIn("Sign in first to accept jobs.");
-    return;
-  }
-  const state = ensureDailyJobsStateFresh(user);
-  const now = Date.now();
-  const cooldownRemainingMs = Math.max(0, Number(state.cooldownUntil || 0) - now);
-  if (state.activeJobId) {
-    setJobsMessage("You already have an active job.", true);
-    renderDailyJobs();
-    return;
-  }
-  if (cooldownRemainingMs > 0) {
-    setJobsMessage(`Cooldown active: ${formatCountdown(cooldownRemainingMs)} remaining.`, true);
-    renderDailyJobs();
-    return;
-  }
-  if ((Number(state.todayEarnings) || 0) >= JOB_DAILY_EARNINGS_CAP) {
-    setJobsMessage("Daily jobs cap reached. Come back tomorrow.", true);
-    renderDailyJobs();
-    return;
-  }
-  const job = state.jobs.find((entry) => entry.id === jobId);
+function acceptJob(jobId) {
+  const job = getBankJobById(jobId);
   if (!job) {
-    setJobsMessage("Job not found.", true);
+    setBankMessage("Job not found.", true);
     return;
   }
-
+  const state = loadUserBankState();
+  const now = Date.now();
+  if (state.activeJobId) {
+    setBankMessage("Finish or claim your active job first.", true);
+    renderBank();
+    return;
+  }
+  if (now < Number(state.jobCooldownUntil || 0)) {
+    setBankMessage(`Cooldown active: ${formatCountdown(Number(state.jobCooldownUntil) - now)} remaining.`, true);
+    renderBank();
+    return;
+  }
+  const reqLevel = getBankJobRequiredLevel(job);
+  if (state.bankLevel < reqLevel) {
+    setBankMessage(`This job unlocks at level ${reqLevel}.`, true);
+    renderBank();
+    return;
+  }
   state.activeJobId = job.id;
-  state.acceptedAt = now;
-  state.endsAt = now + Number(job.durationMs);
-  state.claimed = false;
-  persistDb();
-  setJobsMessage(`Accepted: ${job.title}`);
-  renderDailyJobs();
+  state.jobAcceptedAt = now;
+  state.jobFinishAt = now + job.durationMin * 60 * 1000;
+  saveUserBankState(state);
+  setBankMessage(`Accepted ${job.title}.`);
+  renderBank();
 }
 
-function claimDailyJob() {
-  const user = getCurrentUser();
-  if (!user) {
-    ensureSignedIn("Sign in first to claim jobs.");
-    return;
-  }
-  const state = ensureDailyJobsStateFresh(user);
-  const now = Date.now();
-  if (!state.activeJobId) {
-    setJobsMessage("No active job to claim.", true);
-    return;
-  }
-  const activeJob = state.jobs.find((entry) => entry.id === state.activeJobId);
-  if (!activeJob) {
+async function claimJob() {
+  const result = await updateUserBankStateTransaction((state, now) => {
+    if (!state.activeJobId) {
+      return { error: "No active job to claim." };
+    }
+    const job = getBankJobById(state.activeJobId);
+    if (!job) {
+      state.activeJobId = null;
+      state.jobAcceptedAt = null;
+      state.jobFinishAt = null;
+      return { state, error: "Active job was reset. Please accept a new one." };
+    }
+    if (now < Number(state.jobFinishAt || 0)) {
+      return { error: `Job still running: ${formatCountdown(Number(state.jobFinishAt) - now)} remaining.` };
+    }
+
+    const outcome = calculateJobOutcome(job, state);
+    const delta = round2(Number(outcome.amount) || 0);
+    state.bankBalance = round2(Math.max(0, Number(state.bankBalance) + delta));
+    const xpEarned = Math.ceil(Number(job.durationMin) / 2);
+    state.bankXP = Math.max(0, Math.floor(Number(state.bankXP) || 0) + xpEarned);
+    let leveledUp = 0;
+    while (state.bankXP >= state.bankLevel * 40) {
+      state.bankXP -= state.bankLevel * 40;
+      state.bankLevel += 1;
+      leveledUp += 1;
+    }
+    const repDelta = outcome.meta?.outcome === "fail" ? -2 : job.riskType ? 2 : 1;
+    state.reputation = Math.floor((Number(state.reputation) || 0) + repDelta);
     state.activeJobId = null;
-    state.acceptedAt = null;
-    state.endsAt = null;
-    state.claimed = false;
-    persistDb();
-    setJobsMessage("Active job was reset.", true);
-    renderDailyJobs();
-    return;
-  }
-  if (Number(state.endsAt || 0) > now) {
-    setJobsMessage(`Job still in progress: ${formatCountdown(Number(state.endsAt || 0) - now)} remaining.`, true);
-    return;
-  }
+    state.jobAcceptedAt = null;
+    state.jobFinishAt = null;
+    state.jobCooldownUntil = now + BANK_JOB_COOLDOWN_MS;
+    appendBankTx(state, "job_payout", delta, {
+      jobId: job.id,
+      title: job.title,
+      outcome: outcome.meta?.outcome || "success",
+      xp: xpEarned,
+      levelUps: leveledUp,
+      repDelta
+    });
+    return {
+      state,
+      message: delta >= 0 ? `Claimed ${money(delta)} from ${job.title}.` : `${job.title} lost ${money(Math.abs(delta))}.`
+    };
+  });
 
-  const remainingCap = Math.max(0, JOB_DAILY_EARNINGS_CAP - (Number(state.todayEarnings) || 0));
-  const payout = round2(Math.max(0, Math.min(Number(activeJob.payout) || 0, remainingCap)));
-  if (payout > 0) {
-    addMoney(payout, "job_reward", { jobId: activeJob.id, title: activeJob.title, todayKey: state.todayKey });
-    state.todayEarnings = round2((Number(state.todayEarnings) || 0) + payout);
-  }
-
-  state.claimed = true;
-  state.activeJobId = null;
-  state.acceptedAt = null;
-  state.endsAt = null;
-  state.cooldownUntil = now + JOB_CLAIM_COOLDOWN_MS;
-  persistDb();
-
-  if (payout > 0) {
-    setJobsMessage(`Reward claimed: ${money(payout)} added to wallet.`);
-  } else {
-    setJobsMessage("Daily cap reached. Job completed with no payout.");
+  if (result.message) {
+    setBankMessage(result.message);
   }
   renderWallet();
   renderStats();
-  renderDailyJobs();
+  renderBank();
 }
 
-function ensureDailyJobsStateFresh(user) {
-  const progress = user.progress;
-  const todayKey = getTodayKeyLocal();
-  if (!progress.jobsState || typeof progress.jobsState !== "object") {
-    progress.jobsState = buildInitialJobsState(user.id, todayKey);
+function claimDailyBonus() {
+  const state = loadUserBankState();
+  const now = Date.now();
+  const nextAt = Number(state.lastDailyBonusAt || 0) + 24 * 60 * 60 * 1000;
+  if (state.lastDailyBonusAt && now < nextAt) {
+    setBankMessage(`Daily bonus available in ${formatCountdown(nextAt - now)}.`, true);
+    renderBank();
+    return;
   }
-  const state = progress.jobsState;
-  if (state.todayKey !== todayKey) {
-    progress.jobsState = buildInitialJobsState(user.id, todayKey);
-    return progress.jobsState;
-  }
-  if (!Array.isArray(state.jobs) || !state.jobs.length) {
-    state.jobs = generateDailyJobsForUser(user.id, todayKey);
-  }
-  if (state.activeJobId && !state.jobs.some((job) => job.id === state.activeJobId)) {
-    state.activeJobId = null;
-    state.acceptedAt = null;
-    state.endsAt = null;
-    state.claimed = false;
-  }
-  return state;
-}
-
-function buildInitialJobsState(userId, todayKey) {
-  return {
-    todayKey,
-    jobs: generateDailyJobsForUser(userId, todayKey),
-    activeJobId: null,
-    acceptedAt: null,
-    endsAt: null,
-    claimed: false,
-    todayEarnings: 0,
-    cooldownUntil: null
-  };
-}
-
-function generateDailyJobsForUser(userId, todayKey) {
-  const rng = createSeededRandom(`${userId}|${todayKey}|daily-jobs`);
-  const jobsCount = 6 + Math.floor(rng() * 5);
-  const pool = shuffleWithRng(JOB_POOL.slice(), rng);
-  const jobs = [];
-  for (let i = 0; i < jobsCount; i += 1) {
-    const template = pool[i % pool.length];
-    const durationMinutes = JOB_MIN_DURATION_MINUTES + Math.floor(rng() * (JOB_MAX_DURATION_MINUTES - JOB_MIN_DURATION_MINUTES + 1));
-    const durationMs = durationMinutes * 60 * 1000;
-    const difficulty = durationMinutes <= 8 ? "Easy" : durationMinutes <= 18 ? "Medium" : "Hard";
-    const diffBonus = difficulty === "Hard" ? 70 : difficulty === "Medium" ? 35 : 0;
-    const base = durationMinutes * (8 + rng() * 6) + diffBonus;
-    const payout = clamp(Math.round(base), JOB_MIN_PAYOUT, JOB_MAX_PAYOUT);
-    jobs.push({
-      id: `${todayKey}-${i + 1}-${Math.floor(rng() * 1000000)}`,
-      title: template.title,
-      description: template.description,
-      durationMs,
-      payout: round2(payout),
-      difficulty
-    });
-  }
-  return jobs;
-}
-
-function setJobsMessage(message, isError = false) {
-  if (!ui.jobsMsg) return;
-  ui.jobsMsg.textContent = message;
-  ui.jobsMsg.classList.toggle("error", isError);
+  const bonus = randomInt(BANK_DAILY_BONUS_MIN, BANK_DAILY_BONUS_MAX);
+  state.bankBalance = round2((Number(state.bankBalance) || 0) + bonus);
+  state.lastDailyBonusAt = now;
+  appendBankTx(state, "daily_bonus", bonus, { min: BANK_DAILY_BONUS_MIN, max: BANK_DAILY_BONUS_MAX });
+  saveUserBankState(state);
+  setBankMessage(`Daily bonus claimed: ${money(bonus)}.`);
+  renderWallet();
+  renderStats();
+  renderBank();
 }
 
 function getTodayKeyLocal(ts = Date.now()) {
@@ -3863,11 +4098,12 @@ function handleStorageSync(event) {
 function mapFirestoreDocToListing(doc) {
   const data = doc.data() || {};
   const createdAtMs = data.createdAt?.toMillis ? data.createdAt.toMillis() : Date.now();
+  const title = String(data.title || "Untitled Item");
   const category = String(data.category || "General");
-  const rawImage = data.imageUrl || data.base64Image || fallbackImageForTitle(data.title || "item");
+  const rawImage = data.imageUrl || data.base64Image || fallbackImageForTitle(title);
   let image = normalizeRuntimeImageUrl(rawImage);
-  if (shouldForceFallbackImageUrl(image)) {
-    image = normalizeRuntimeImageUrl(fallbackImageForCategory(category));
+  if (shouldUseStockReplacement(image)) {
+    image = normalizeRuntimeImageUrl(buildStockPhotoUrl(`${title} ${category}`));
   }
   const rarity = normalizeRarity(data.rarity || "common");
   const features = Array.isArray(data.features)
@@ -3875,7 +4111,7 @@ function mapFirestoreDocToListing(doc) {
     : [];
   return {
     id: doc.id,
-    title: String(data.title || "Untitled Item"),
+    title,
     brand: String(data.brand || "NovaGoods").trim().slice(0, 40) || "NovaGoods",
     category,
     price: round2(Math.max(0.01, Number(data.price) || 0.01)),
@@ -4222,7 +4458,19 @@ function normalizeUsername(value) {
 
 function defaultProgress() {
   return {
-    balance: 0,
+    balance: 500,
+    bankBalance: 500,
+    bankLevel: 1,
+    bankXP: 0,
+    reputation: 0,
+    activeJobId: null,
+    jobAcceptedAt: null,
+    jobFinishAt: null,
+    jobCooldownUntil: null,
+    lastDailyBonusAt: null,
+    lastInterestAt: null,
+    txLog: [],
+    showRiskyJobs: false,
     hasAgeId: false,
     fundTimerEndsAt: null,
     notifiedDeliveredOrderIds: [],
@@ -4235,8 +4483,6 @@ function defaultProgress() {
     cart: {},
     orders: [],
     firestoreOrders: [],
-    jobsState: null,
-    fiveMinReward: null,
     moneyLedger: [],
     search: "",
     category: "all",
@@ -4655,59 +4901,6 @@ function estimateNetSaleValue(item) {
   return round2(Math.min(SELL_CAP, base * (1 - SELL_TAX_RATE)));
 }
 
-function normalizeJobsState(raw, progress, todayKey) {
-  if (!raw || typeof raw !== "object") return null;
-  const jobs = Array.isArray(raw.jobs)
-    ? raw.jobs
-        .map((job) => ({
-          id: String(job?.id || ""),
-          title: String(job?.title || "Job"),
-          description: String(job?.description || ""),
-          durationMs: Math.max(60 * 1000, Math.floor(Number(job?.durationMs) || 0)),
-          payout: round2(Math.max(0, Number(job?.payout) || 0)),
-          difficulty: ["Easy", "Medium", "Hard"].includes(String(job?.difficulty)) ? String(job.difficulty) : "Easy"
-        }))
-        .filter((job) => job.id)
-    : [];
-
-  const state = {
-    todayKey: String(raw.todayKey || todayKey),
-    jobs,
-    activeJobId: raw.activeJobId ? String(raw.activeJobId) : null,
-    acceptedAt: Number(raw.acceptedAt) > 0 ? Number(raw.acceptedAt) : null,
-    endsAt: Number(raw.endsAt) > 0 ? Number(raw.endsAt) : null,
-    claimed: raw.claimed === true,
-    todayEarnings: round2(Math.max(0, Number(raw.todayEarnings) || 0)),
-    cooldownUntil: Number(raw.cooldownUntil) > 0 ? Number(raw.cooldownUntil) : null
-  };
-  if (state.todayKey !== todayKey) return null;
-  if (state.activeJobId && !state.jobs.some((job) => job.id === state.activeJobId)) {
-    state.activeJobId = null;
-    state.acceptedAt = null;
-    state.endsAt = null;
-    state.claimed = false;
-  }
-  return state;
-}
-
-function normalizeFiveMinRewardState(raw, todayKey) {
-  if (!raw || typeof raw !== "object") return null;
-  const normalized = {
-    todayKey: String(raw.todayKey || todayKey),
-    lastClaimAt: Number(raw.lastClaimAt) > 0 ? Number(raw.lastClaimAt) : null,
-    nextClaimAt: Number(raw.nextClaimAt) > 0 ? Number(raw.nextClaimAt) : null,
-    todayTotal5minRewards: round2(Math.max(0, Number(raw.todayTotal5minRewards) || 0)),
-    lastRewardAmount: round2(Math.max(0, Number(raw.lastRewardAmount) || 0)),
-    claimHistory: Array.isArray(raw.claimHistory) ? raw.claimHistory.slice(0, 10) : []
-  };
-  if (normalized.todayKey !== todayKey) {
-    normalized.todayKey = todayKey;
-    normalized.todayTotal5minRewards = 0;
-    normalized.claimHistory = [];
-  }
-  return normalized;
-}
-
 function normalizeProgress(progress, catalog) {
   const base = defaultProgress();
   if (!progress || typeof progress !== "object") {
@@ -4725,7 +4918,19 @@ function normalizeProgress(progress, catalog) {
   const categories = ["all", ...new Set((catalog || []).map((item) => item.category))];
 
   return {
-    balance: round2(Math.max(0, Number(progress.balance) || 0)),
+    balance: round2(Math.max(0, Number(progress.balance) || Number(progress.bankBalance) || 500)),
+    bankBalance: round2(Math.max(0, Number(progress.bankBalance) || Number(progress.balance) || 500)),
+    bankLevel: Math.max(1, Math.floor(Number(progress.bankLevel) || 1)),
+    bankXP: Math.max(0, Math.floor(Number(progress.bankXP) || 0)),
+    reputation: Math.floor(Number(progress.reputation) || 0),
+    activeJobId: progress.activeJobId ? String(progress.activeJobId) : null,
+    jobAcceptedAt: Number(progress.jobAcceptedAt) > 0 ? Number(progress.jobAcceptedAt) : null,
+    jobFinishAt: Number(progress.jobFinishAt) > 0 ? Number(progress.jobFinishAt) : null,
+    jobCooldownUntil: Number(progress.jobCooldownUntil) > 0 ? Number(progress.jobCooldownUntil) : null,
+    lastDailyBonusAt: Number(progress.lastDailyBonusAt) > 0 ? Number(progress.lastDailyBonusAt) : null,
+    lastInterestAt: Number(progress.lastInterestAt) > 0 ? Number(progress.lastInterestAt) : null,
+    txLog: normalizeBankTxLog(progress.txLog),
+    showRiskyJobs: progress.showRiskyJobs === true,
     hasAgeId: progress.hasAgeId === true,
     fundTimerEndsAt:
       Number(progress.fundTimerEndsAt) > Date.now() - 24 * 60 * 60 * 1000
@@ -4743,8 +4948,6 @@ function normalizeProgress(progress, catalog) {
     cart,
     orders: Array.isArray(progress.orders) ? progress.orders.slice(0, 50) : [],
     firestoreOrders: Array.isArray(progress.firestoreOrders) ? progress.firestoreOrders.slice(0, 100) : [],
-    jobsState: normalizeJobsState(progress.jobsState, progress, getTodayKeyLocal()),
-    fiveMinReward: normalizeFiveMinRewardState(progress.fiveMinReward, getTodayKeyLocal()),
     moneyLedger: Array.isArray(progress.moneyLedger) ? progress.moneyLedger.slice(0, 200) : [],
     search: String(progress.search || ""),
     category: categories.includes(progress.category) ? progress.category : "all",
@@ -4763,11 +4966,7 @@ function isNewDrop(createdAt) {
 }
 
 function fallbackImageForTitle(title) {
-  const seed = hashStringToInt(String(title || "product"));
-  const all = Object.values(AUTO_CATALOG_IMAGE_FILES).flat();
-  const name = all[seed % all.length] || "tech-01.svg";
-  const folder = name.split("-")[0] || "tech";
-  return `/public/images/catalog/${folder}/${name}`;
+  return buildStockPhotoUrl(String(title || "product"));
 }
 
 function normalizeRuntimeImageUrl(src) {
@@ -4784,10 +4983,26 @@ function normalizeRuntimeImageUrl(src) {
   return value;
 }
 
-function shouldForceFallbackImageUrl(imageUrl) {
+function shouldUseStockReplacement(imageUrl) {
   const value = String(imageUrl || "");
   if (!value) return true;
-  return value.startsWith("public/generated-products/") || value.startsWith("/public/generated-products/");
+  return (
+    value.startsWith("public/generated-products/") ||
+    value.startsWith("/public/generated-products/") ||
+    value.startsWith("public/images/catalog/") ||
+    value.startsWith("/public/images/catalog/")
+  );
+}
+
+function buildStockPhotoUrl(query) {
+  const cleaned = String(query || "product").toLowerCase().replace(/[^a-z0-9\s-]/g, " ");
+  const terms = cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3);
+  const tags = terms.length ? terms.join(",") : "product";
+  const lock = Math.abs(hashStringToInt(cleaned || "product")) % 100000;
+  return `https://loremflickr.com/900/900/${encodeURIComponent(tags)}?lock=${lock}`;
 }
 
 function attachImageFallback(imageEl, title) {
