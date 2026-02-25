@@ -1106,3 +1106,184 @@ label {
     width: auto;
   }
 }
+
+/* Modern UI refresh */
+:root {
+  --bg: #eef3fb;
+  --panel: #ffffff;
+  --ink: #0e1c33;
+  --muted: #5f6f87;
+  --line: #d7e0ef;
+  --brand: #0f3f8a;
+  --accent: #ff9a1f;
+  --ok: #137e4e;
+  --radius: 18px;
+  --shadow-1: 0 8px 24px rgba(15, 34, 66, 0.08);
+  --shadow-2: 0 16px 36px rgba(15, 34, 66, 0.14);
+}
+
+body {
+  background:
+    radial-gradient(circle at 4% -10%, rgba(108, 169, 255, 0.24) 0, transparent 45%),
+    radial-gradient(circle at 92% -14%, rgba(255, 193, 116, 0.2) 0, transparent 42%),
+    linear-gradient(180deg, #f6f9ff 0%, #eef3fb 100%);
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.topbar {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(215, 224, 239, 0.9);
+  backdrop-filter: blur(8px);
+  border-radius: 16px;
+  padding: 0.8rem;
+}
+
+.tabs {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(215, 224, 239, 0.9);
+  border-radius: 14px;
+  padding: 0.45rem;
+  width: fit-content;
+}
+
+.tab-btn {
+  border-radius: 11px;
+  transition: transform 0.18s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.tab-btn.active {
+  box-shadow: 0 6px 16px rgba(15, 63, 138, 0.28);
+}
+
+.tab-btn:hover {
+  transform: translateY(-1px);
+}
+
+input,
+textarea,
+select,
+button {
+  border-radius: 12px;
+}
+
+input,
+textarea,
+select {
+  background: #fff;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: #90b7f6;
+  box-shadow: 0 0 0 3px rgba(90, 147, 238, 0.16);
+}
+
+button {
+  transition: transform 0.18s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 63, 138, 0.24);
+}
+
+.panel,
+.product-card,
+.cart-item,
+.order-card,
+.review-item,
+.tracking-card,
+.stats-card,
+.collection-card,
+.admin-row {
+  box-shadow: var(--shadow-1);
+}
+
+.panel {
+  border-color: rgba(215, 224, 239, 0.95);
+}
+
+.sidebar section,
+.fund-timer,
+.id-shop,
+.social-panel {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.product-card {
+  padding: 0.9rem;
+  border-radius: 16px;
+  transition: transform 0.2s ease, box-shadow 0.24s ease, border-color 0.2s ease;
+}
+
+.product-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-2);
+  border-color: #b9cbeb;
+}
+
+.product-title {
+  font-size: 1.02rem;
+}
+
+.price {
+  font-size: 1.02rem;
+}
+
+.orders,
+#creditsView,
+#collectionView,
+#trackingView,
+#statsView {
+  animation: fade-in-up 0.26s ease;
+}
+
+.delivery-popup {
+  box-shadow: 0 20px 44px rgba(12, 28, 58, 0.2);
+}
+
+.admin-panel {
+  border-top-style: dashed;
+}
+
+.sync-status-msg {
+  font-weight: 500;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .tabs {
+    width: 100%;
+  }
+
+  .topbar {
+    padding: 0.7rem;
+  }
+
+  .brand-wrap h1 {
+    font-size: 1.34rem;
+  }
+
+  .panel,
+  .product-card,
+  .cart-item,
+  .order-card,
+  .tracking-card,
+  .collection-card {
+    box-shadow: 0 6px 14px rgba(15, 34, 66, 0.08);
+  }
+}

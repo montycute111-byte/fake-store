@@ -1570,14 +1570,14 @@ function checkForDeliveredItems() {
   if (!newlyDelivered.length) return;
 
   for (const order of newlyDelivered) {
-    const deliveredItems = getOrderItems(order);
+    const deliveredItems = expandOrderItemsByQuantity(getOrderItems(order));
     for (const delivered of deliveredItems) {
       const resolvedImage = resolveOrderItemImage(delivered);
       const valueEach = round2(Number(delivered.price) || Number(findProductById(delivered.productId)?.price) || 1);
       const key = collectionStackKey(delivered);
       const existing = inventoryByProduct.get(key);
       if (existing) {
-        existing.qty += Math.max(1, Number(delivered.qty) || 1);
+        existing.qty += 1;
         if (!existing.image) existing.image = resolvedImage;
       } else {
         const entry = {
@@ -1585,7 +1585,7 @@ function checkForDeliveredItems() {
           productId: delivered.productId || null,
           title: delivered.title,
           image: resolvedImage,
-          qty: Math.max(1, Number(delivered.qty) || 1),
+          qty: 1,
           valueEach,
           rarity: normalizeRarity(delivered.rarity),
           conditions: normalizeConditions(delivered.conditions)
@@ -1601,7 +1601,7 @@ function checkForDeliveredItems() {
   persistDb();
 
   for (const order of newlyDelivered) {
-    const deliveredItems = getOrderItems(order);
+    const deliveredItems = expandOrderItemsByQuantity(getOrderItems(order));
     const first = deliveredItems[0];
     const firstTitle = first?.title || "item";
     const firstImage = resolveOrderItemImage(first);
@@ -1636,10 +1636,40 @@ function getOrderItems(order) {
 
   const products = Array.isArray(order?.products) ? order.products : [];
   if (!products.length) {
-    return [{ productId: null, title: "Delivered item", qty: 1, image: null }];
+    const fallbackQty = Math.max(1, Number(order?.itemCount) || 1);
+    return [{ productId: null, title: "Delivered item", qty: fallbackQty, image: null }];
   }
 
-  return products.map((entry) => parseOrderProductEntry(entry));
+  const parsed = products.map((entry) => parseOrderProductEntry(entry));
+  const totalQty = parsed.reduce((sum, item) => sum + Math.max(1, Number(item.qty) || 1), 0);
+  const expectedQty = Math.max(1, Number(order?.itemCount) || totalQty || 1);
+  if (totalQty < expectedQty) {
+    parsed.push({
+      productId: null,
+      title: "Delivered item",
+      qty: expectedQty - totalQty,
+      image: null,
+      price: 1,
+      rarity: "common",
+      conditions: []
+    });
+  }
+  return parsed;
+}
+
+function expandOrderItemsByQuantity(items) {
+  if (!Array.isArray(items) || !items.length) return [];
+  const expanded = [];
+  for (const item of items) {
+    const qty = Math.max(1, Number(item?.qty) || 1);
+    for (let i = 0; i < qty; i += 1) {
+      expanded.push({
+        ...item,
+        qty: 1
+      });
+    }
+  }
+  return expanded;
 }
 
 function parseOrderProductEntry(entry) {
