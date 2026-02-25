@@ -87,13 +87,6 @@ const ui = {
   creditsView: document.querySelector("#creditsView"),
   collectionView: document.querySelector("#collectionView"),
   collectionGrid: document.querySelector("#collectionGrid"),
-  friendRequestForm: document.querySelector("#friendRequestForm"),
-  friendUsernameInput: document.querySelector("#friendUsernameInput"),
-  tradeFriendSelect: document.querySelector("#tradeFriendSelect"),
-  friendRequestsList: document.querySelector("#friendRequestsList"),
-  friendsList: document.querySelector("#friendsList"),
-  tradeInboxList: document.querySelector("#tradeInboxList"),
-  socialMsg: document.querySelector("#socialMsg"),
   trackingView: document.querySelector("#trackingView"),
   trackingList: document.querySelector("#trackingList"),
   statsView: document.querySelector("#statsView"),
@@ -123,9 +116,6 @@ const ui = {
 init();
 
 function init() {
-  if (!Array.isArray(db.tradeRequests)) {
-    db.tradeRequests = [];
-  }
   ensureActiveShopperSession();
   hydrateCatalogFromLocalCache();
   populateCategories();
@@ -208,18 +198,6 @@ function bindEvents() {
   });
   ui.deliveryPopupClose.addEventListener("click", hideDeliveryPopup);
   ui.collectionGrid.addEventListener("click", handleCollectionAction);
-  if (ui.friendRequestForm) {
-    ui.friendRequestForm.addEventListener("submit", handleFriendRequestSubmit);
-  }
-  if (ui.friendRequestsList) {
-    ui.friendRequestsList.addEventListener("click", handleFriendRequestAction);
-  }
-  if (ui.friendsList) {
-    ui.friendsList.addEventListener("click", handleFriendRequestAction);
-  }
-  if (ui.tradeInboxList) {
-    ui.tradeInboxList.addEventListener("click", handleTradeInboxAction);
-  }
   window.addEventListener("storage", handleStorageSync);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
@@ -685,7 +663,7 @@ function renderListingPreview() {
     return;
   }
 
-  const reviews = Array.isArray(product.reviews) ? product.reviews : [];
+  const reviews = getReviewsForProduct(product);
   const canBuyAgeRestricted = !product.ageRestricted || hasAgeIdFor21Plus();
   const outOfStock = Number(product.stock) === 0;
   const effectiveRating = getEffectiveRating(product);
@@ -808,7 +786,6 @@ function renderOrders() {
 function renderCollection() {
   const progress = getProgressOrNull();
   const inventory = progress ? normalizeCollectionInventory(progress.collectionInventory) : [];
-  renderSocialPanel();
 
   ui.collectionGrid.innerHTML = "";
   if (!inventory.length) {
@@ -819,7 +796,6 @@ function renderCollection() {
     return;
   }
 
-  const friendCount = progress ? normalizeUserIdArray(progress.friends).length : 0;
   for (const item of inventory) {
     const card = document.createElement("article");
     card.className = `collection-card rarity-${item.rarity}`;
@@ -835,323 +811,9 @@ function renderCollection() {
       <button type="button" class="collection-sell-btn" data-id="${item.id}">
         Sell Item (est. ${money(estimate)})
       </button>
-      <button type="button" class="collection-trade-btn" data-id="${item.id}" ${friendCount ? "" : "disabled"}>
-        ${friendCount ? "Offer Trade to Friend" : "Add a Friend to Trade"}
-      </button>
     `;
     ui.collectionGrid.append(card);
   }
-}
-
-function renderSocialPanel() {
-  if (!ui.friendsList || !ui.friendRequestsList || !ui.tradeInboxList || !ui.tradeFriendSelect) return;
-  const user = getCurrentUser();
-  if (!user) {
-    ui.friendsList.innerHTML = '<p class="hint">Sign in to use friends.</p>';
-    ui.friendRequestsList.innerHTML = "";
-    ui.tradeInboxList.innerHTML = "";
-    ui.tradeFriendSelect.innerHTML = '<option value="">Select friend</option>';
-    return;
-  }
-
-  const progress = ensureSocialProgressState(user.progress);
-  const friendIds = normalizeUserIdArray(progress.friends);
-  const incoming = normalizeUserIdArray(progress.incomingFriendRequests);
-  const outgoing = normalizeUserIdArray(progress.outgoingFriendRequests);
-  const pendingTrades = (db.tradeRequests || []).filter((trade) => trade.toUserId === user.id && trade.status === "pending");
-
-  ui.tradeFriendSelect.innerHTML = '<option value="">Select friend</option>';
-  for (const friendId of friendIds) {
-    const friend = findUserById(friendId);
-    if (!friend) continue;
-    const option = document.createElement("option");
-    option.value = friend.id;
-    option.textContent = `@${friend.username}`;
-    ui.tradeFriendSelect.append(option);
-  }
-
-  ui.friendsList.innerHTML = "";
-  if (!friendIds.length) {
-    ui.friendsList.innerHTML = '<p class="hint">No friends added yet.</p>';
-  } else {
-    for (const friendId of friendIds) {
-      const friend = findUserById(friendId);
-      if (!friend) continue;
-      const row = document.createElement("div");
-      row.className = "social-item";
-      row.innerHTML = `
-        <strong>@${friend.username}</strong>
-        <button type="button" class="social-action danger" data-action="remove-friend" data-id="${friend.id}">Remove</button>
-      `;
-      ui.friendsList.append(row);
-    }
-  }
-
-  ui.friendRequestsList.innerHTML = "";
-  if (!incoming.length) {
-    ui.friendRequestsList.innerHTML = '<p class="hint">No incoming requests.</p>';
-  } else {
-    for (const fromUserId of incoming) {
-      const fromUser = findUserById(fromUserId);
-      if (!fromUser) continue;
-      const row = document.createElement("div");
-      row.className = "social-item";
-      row.innerHTML = `
-        <strong>@${fromUser.username}</strong>
-        <div class="social-item-actions">
-          <button type="button" class="social-action" data-action="accept-friend" data-id="${fromUser.id}">Accept</button>
-          <button type="button" class="social-action danger" data-action="decline-friend" data-id="${fromUser.id}">Decline</button>
-        </div>
-      `;
-      ui.friendRequestsList.append(row);
-    }
-  }
-
-  ui.tradeInboxList.innerHTML = "";
-  if (!pendingTrades.length) {
-    ui.tradeInboxList.innerHTML = '<p class="hint">No incoming trade offers.</p>';
-  } else {
-    for (const trade of pendingTrades.slice(0, 25)) {
-      const sender = findUserById(trade.fromUserId);
-      const title = String(trade?.item?.title || "Item");
-      const rarity = normalizeRarity(trade?.item?.rarity);
-      const row = document.createElement("div");
-      row.className = "social-item";
-      row.innerHTML = `
-        <div>
-          <strong>${title}</strong>
-          <p class="hint">From @${sender?.username || "unknown"} • ${rarity}</p>
-        </div>
-        <div class="social-item-actions">
-          <button type="button" class="social-action" data-action="accept-trade" data-id="${trade.id}">Accept</button>
-          <button type="button" class="social-action danger" data-action="decline-trade" data-id="${trade.id}">Decline</button>
-        </div>
-      `;
-      ui.tradeInboxList.append(row);
-    }
-  }
-
-  if (!outgoing.length && ui.socialMsg && !ui.socialMsg.classList.contains("error")) {
-    ui.socialMsg.textContent = "";
-  }
-}
-
-function handleFriendRequestSubmit(event) {
-  event.preventDefault();
-  const current = getCurrentUser();
-  if (!current) {
-    ensureSignedIn("Sign in first to add friends.");
-    return;
-  }
-  const progress = ensureSocialProgressState(current.progress);
-  const form = new FormData(event.currentTarget);
-  const targetUsername = normalizeUsername(form.get("username"));
-  if (!targetUsername) {
-    setSocialMessage("Enter a username.", true);
-    return;
-  }
-  if (targetUsername === current.username) {
-    setSocialMessage("You cannot add yourself.", true);
-    return;
-  }
-  const targetUser = db.users.find((user) => user.username === targetUsername);
-  if (!targetUser) {
-    setSocialMessage("User not found.", true);
-    return;
-  }
-
-  const targetProgress = ensureSocialProgressState(targetUser.progress);
-  if (normalizeUserIdArray(progress.friends).includes(targetUser.id)) {
-    setSocialMessage("Already friends.");
-    return;
-  }
-  if (normalizeUserIdArray(progress.outgoingFriendRequests).includes(targetUser.id)) {
-    setSocialMessage("Friend request already sent.");
-    return;
-  }
-  if (normalizeUserIdArray(progress.incomingFriendRequests).includes(targetUser.id)) {
-    acceptFriendRequestInternal(current.id, targetUser.id);
-    persistDb();
-    setSocialMessage(`You are now friends with @${targetUser.username}.`);
-    renderCollection();
-    return;
-  }
-
-  progress.outgoingFriendRequests.push(targetUser.id);
-  targetProgress.incomingFriendRequests.push(current.id);
-  progress.outgoingFriendRequests = normalizeUserIdArray(progress.outgoingFriendRequests);
-  targetProgress.incomingFriendRequests = normalizeUserIdArray(targetProgress.incomingFriendRequests);
-  persistDb();
-  setSocialMessage(`Friend request sent to @${targetUser.username}.`);
-  event.currentTarget.reset();
-  renderCollection();
-}
-
-function handleFriendRequestAction(event) {
-  const actionBtn = event.target.closest("[data-action]");
-  if (!actionBtn) return;
-  const action = actionBtn.dataset.action;
-  const peerId = String(actionBtn.dataset.id || "");
-  if (!peerId) return;
-  const current = getCurrentUser();
-  if (!current) return;
-
-  if (action === "accept-friend") {
-    acceptFriendRequestInternal(current.id, peerId);
-    persistDb();
-    const peer = findUserById(peerId);
-    setSocialMessage(`Accepted @${peer?.username || "user"}.`);
-  } else if (action === "decline-friend") {
-    declineFriendRequestInternal(current.id, peerId);
-    persistDb();
-    setSocialMessage("Friend request declined.");
-  } else if (action === "remove-friend") {
-    removeFriendInternal(current.id, peerId);
-    persistDb();
-    setSocialMessage("Friend removed.");
-  }
-  renderCollection();
-}
-
-function handleTradeInboxAction(event) {
-  const actionBtn = event.target.closest("[data-action]");
-  if (!actionBtn) return;
-  const action = actionBtn.dataset.action;
-  const tradeId = String(actionBtn.dataset.id || "");
-  if (!tradeId) return;
-
-  if (action === "accept-trade") {
-    const accepted = acceptTradeInternal(tradeId);
-    if (accepted) {
-      setSocialMessage("Trade accepted. Item transferred.");
-    }
-  } else if (action === "decline-trade") {
-    const trade = (db.tradeRequests || []).find((entry) => entry.id === tradeId);
-    if (trade) {
-      trade.status = "declined";
-      persistDb();
-      setSocialMessage("Trade declined.");
-    }
-  }
-  renderCollection();
-}
-
-function setSocialMessage(message, isError = false) {
-  if (!ui.socialMsg) return;
-  ui.socialMsg.textContent = message;
-  ui.socialMsg.classList.toggle("error", isError);
-}
-
-function ensureSocialProgressState(progress) {
-  if (!progress || typeof progress !== "object") return defaultProgress();
-  progress.friends = normalizeUserIdArray(progress.friends);
-  progress.incomingFriendRequests = normalizeUserIdArray(progress.incomingFriendRequests);
-  progress.outgoingFriendRequests = normalizeUserIdArray(progress.outgoingFriendRequests);
-  return progress;
-}
-
-function normalizeUserIdArray(input) {
-  if (!Array.isArray(input)) return [];
-  return [...new Set(input.map((id) => String(id || "").trim()).filter(Boolean))];
-}
-
-function findUserById(id) {
-  return db.users.find((user) => user.id === String(id || "")) || null;
-}
-
-function acceptFriendRequestInternal(currentUserId, fromUserId) {
-  const current = findUserById(currentUserId);
-  const from = findUserById(fromUserId);
-  if (!current || !from) return false;
-  const currentProgress = ensureSocialProgressState(current.progress);
-  const fromProgress = ensureSocialProgressState(from.progress);
-
-  currentProgress.incomingFriendRequests = normalizeUserIdArray(currentProgress.incomingFriendRequests).filter((id) => id !== from.id);
-  fromProgress.outgoingFriendRequests = normalizeUserIdArray(fromProgress.outgoingFriendRequests).filter((id) => id !== current.id);
-  currentProgress.friends = normalizeUserIdArray([...currentProgress.friends, from.id]);
-  fromProgress.friends = normalizeUserIdArray([...fromProgress.friends, current.id]);
-  return true;
-}
-
-function declineFriendRequestInternal(currentUserId, fromUserId) {
-  const current = findUserById(currentUserId);
-  const from = findUserById(fromUserId);
-  if (!current || !from) return false;
-  const currentProgress = ensureSocialProgressState(current.progress);
-  const fromProgress = ensureSocialProgressState(from.progress);
-  currentProgress.incomingFriendRequests = normalizeUserIdArray(currentProgress.incomingFriendRequests).filter((id) => id !== from.id);
-  fromProgress.outgoingFriendRequests = normalizeUserIdArray(fromProgress.outgoingFriendRequests).filter((id) => id !== current.id);
-  return true;
-}
-
-function removeFriendInternal(aUserId, bUserId) {
-  const a = findUserById(aUserId);
-  const b = findUserById(bUserId);
-  if (!a || !b) return false;
-  const aProgress = ensureSocialProgressState(a.progress);
-  const bProgress = ensureSocialProgressState(b.progress);
-  aProgress.friends = normalizeUserIdArray(aProgress.friends).filter((id) => id !== b.id);
-  bProgress.friends = normalizeUserIdArray(bProgress.friends).filter((id) => id !== a.id);
-  aProgress.incomingFriendRequests = normalizeUserIdArray(aProgress.incomingFriendRequests).filter((id) => id !== b.id);
-  aProgress.outgoingFriendRequests = normalizeUserIdArray(aProgress.outgoingFriendRequests).filter((id) => id !== b.id);
-  bProgress.incomingFriendRequests = normalizeUserIdArray(bProgress.incomingFriendRequests).filter((id) => id !== a.id);
-  bProgress.outgoingFriendRequests = normalizeUserIdArray(bProgress.outgoingFriendRequests).filter((id) => id !== a.id);
-  return true;
-}
-
-function acceptTradeInternal(tradeId) {
-  const trade = (db.tradeRequests || []).find((entry) => entry.id === tradeId && entry.status === "pending");
-  const current = getCurrentUser();
-  if (!trade || !current || trade.toUserId !== current.id) return false;
-
-  const fromUser = findUserById(trade.fromUserId);
-  const toUser = findUserById(trade.toUserId);
-  if (!fromUser || !toUser) {
-    trade.status = "declined";
-    persistDb();
-    setSocialMessage("Trade failed: sender not found.", true);
-    return false;
-  }
-
-  const fromProgress = ensureSocialProgressState(fromUser.progress);
-  const toProgress = ensureSocialProgressState(toUser.progress);
-  const fromInventory = normalizeCollectionInventory(fromProgress.collectionInventory);
-  const fromItem = fromInventory.find((item) => item.id === String(trade.sourceItemId || ""));
-  if (!fromItem || fromItem.qty <= 0) {
-    trade.status = "declined";
-    persistDb();
-    setSocialMessage("Trade failed: sender no longer has that item.", true);
-    return false;
-  }
-
-  fromItem.qty -= 1;
-  fromProgress.collectionInventory = fromInventory.filter((item) => item.qty > 0);
-
-  const toInventory = normalizeCollectionInventory(toProgress.collectionInventory);
-  const incomingItem = normalizeCollectionInventory([
-    {
-      id: crypto.randomUUID(),
-      productId: trade.item?.productId || null,
-      title: trade.item?.title || "Item",
-      image: trade.item?.image || fallbackImageForTitle(trade.item?.title || "item"),
-      qty: 1,
-      valueEach: Number(trade.item?.valueEach) || 1,
-      rarity: normalizeRarity(trade.item?.rarity),
-      conditions: normalizeConditions(trade.item?.conditions)
-    }
-  ])[0];
-  const stackKey = collectionStackKey(incomingItem);
-  const existing = toInventory.find((item) => collectionStackKey(item) === stackKey);
-  if (existing) {
-    existing.qty += 1;
-  } else {
-    toInventory.push(incomingItem);
-  }
-  toProgress.collectionInventory = normalizeCollectionInventory(toInventory);
-
-  trade.status = "accepted";
-  persistDb();
-  return true;
 }
 
 function renderTracking() {
@@ -1210,9 +872,7 @@ function renderStats() {
 }
 
 function handleCollectionAction(event) {
-  const sellTarget = event.target.closest(".collection-sell-btn");
-  const tradeTarget = event.target.closest(".collection-trade-btn");
-  const target = sellTarget || tradeTarget;
+  const target = event.target.closest(".collection-sell-btn");
   if (!target) return;
   const itemId = target.dataset.id;
   if (!itemId) return;
@@ -1225,44 +885,6 @@ function handleCollectionAction(event) {
   const inventory = normalizeCollectionInventory(nextProgress.collectionInventory);
   const item = inventory.find((entry) => entry.id === itemId);
   if (!item || item.qty <= 0) return;
-
-  if (tradeTarget) {
-    const toUserId = String(ui.tradeFriendSelect?.value || "");
-    if (!toUserId) {
-      setSocialMessage("Choose a friend in Trade Target first.", true);
-      return;
-    }
-    if (!normalizeUserIdArray(nextProgress.friends).includes(toUserId)) {
-      setSocialMessage("That user is not in your friends list.", true);
-      return;
-    }
-    const toUser = findUserById(toUserId);
-    if (!toUser) {
-      setSocialMessage("Friend account not found.", true);
-      return;
-    }
-    const trade = {
-      id: crypto.randomUUID(),
-      fromUserId: getCurrentUser().id,
-      toUserId,
-      sourceItemId: item.id,
-      item: {
-        productId: item.productId || null,
-        title: item.title,
-        image: item.image,
-        valueEach: item.valueEach,
-        rarity: item.rarity,
-        conditions: item.conditions
-      },
-      status: "pending",
-      createdAt: new Date().toISOString()
-    };
-    db.tradeRequests = [trade, ...(db.tradeRequests || [])].slice(0, 500);
-    persistDb();
-    setSocialMessage(`Trade offer sent to @${toUser.username}.`);
-    renderCollection();
-    return;
-  }
 
   if (item.rarity === "mythic" && Number(nextProgress.lastMythicSaleAt || 0) > Date.now() - MYTHIC_SELL_COOLDOWN_MS) {
     const waitMs = MYTHIC_SELL_COOLDOWN_MS - (Date.now() - Number(nextProgress.lastMythicSaleAt || 0));
@@ -1317,7 +939,7 @@ function addToCart(productId) {
   renderCart();
 }
 
-function handlePreviewReviewSubmit(event) {
+async function handlePreviewReviewSubmit(event) {
   event.preventDefault();
   const progress = getProgressOrNull();
   if (!progress && !ensureSignedIn("Sign in first to review listings.")) return;
@@ -1336,17 +958,48 @@ function handlePreviewReviewSubmit(event) {
     return;
   }
 
-  if (!Array.isArray(product.reviews)) {
-    product.reviews = [];
-  }
-
-  product.reviews.push({
+  const review = {
     id: crypto.randomUUID(),
     username: user.username,
     rating: Math.round(rating),
     text: text.slice(0, 240),
     createdAt: new Date().toISOString()
-  });
+  };
+
+  const key = String(product.id || "");
+  if (!key) return;
+
+  if (firestoreDb) {
+    try {
+      const listingRef = firestoreDb.collection("listings").doc(key);
+      await listingRef.update({
+        reviews: window.firebase.firestore.FieldValue.arrayUnion(review)
+      });
+      if (!Array.isArray(product.reviews)) {
+        product.reviews = [];
+      }
+      product.reviews.push(review);
+      ui.previewReviewForm.reset();
+      ui.previewReviewMsg.textContent = "Review posted.";
+      ui.previewReviewMsg.classList.remove("error");
+      renderListingPreview();
+      renderProducts();
+      return;
+    } catch (error) {
+      console.error("[Firestore] review write failed:", error);
+      ui.previewReviewMsg.textContent = "Review save failed online. Saved locally only.";
+      ui.previewReviewMsg.classList.add("error");
+    }
+  }
+
+  if (!db.listingReviews || typeof db.listingReviews !== "object") {
+    db.listingReviews = {};
+  }
+  if (!Array.isArray(db.listingReviews[key])) {
+    db.listingReviews[key] = [];
+  }
+  db.listingReviews[key].push(review);
+  db.listingReviews[key] = normalizeReviews(db.listingReviews[key]).slice(-500);
 
   persistDb();
   ui.previewReviewForm.reset();
@@ -2130,7 +1783,7 @@ function mapFirestoreDocToListing(doc) {
     isPublic: true,
     status: String(data.status || "active"),
     description: String(data.description || "").slice(0, 500),
-    reviews: [],
+    reviews: normalizeReviews(data.reviews),
     createdAt: new Date(createdAtMs).toISOString()
   };
 }
@@ -2150,6 +1803,7 @@ async function addListing(listing) {
     createdBy: String(listing.createdBy || "ronin"),
     createdByName: String(listing.createdByName || "ronin"),
     status: String(listing.status || "active"),
+    reviews: [],
     createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
   };
   if (listing.imageUrl) payload.imageUrl = String(listing.imageUrl);
@@ -2431,9 +2085,6 @@ function defaultProgress() {
     cart: {},
     orders: [],
     firestoreOrders: [],
-    friends: [],
-    incomingFriendRequests: [],
-    outgoingFriendRequests: [],
     search: "",
     category: "all",
     sort: "featured"
@@ -2489,7 +2140,7 @@ function loadDb() {
         currentUserId: null,
         deletedCatalogIds: [],
         catalog: SEED_PRODUCTS.map((item) => ({ ...item })),
-        tradeRequests: []
+        listingReviews: {}
       };
     }
 
@@ -2508,14 +2159,14 @@ function loadDb() {
       : [];
 
     const validIds = new Set(users.map((user) => user.id));
-    const tradeRequests = normalizeTradeRequests(parsed.tradeRequests, validIds);
+    const listingReviews = normalizeListingReviews(parsed.listingReviews);
 
     return {
       users,
       currentUserId: validIds.has(parsed.currentUserId) ? parsed.currentUserId : null,
       deletedCatalogIds,
       catalog,
-      tradeRequests
+      listingReviews
     };
   } catch {
     return {
@@ -2523,7 +2174,7 @@ function loadDb() {
       currentUserId: null,
       deletedCatalogIds: [],
       catalog: SEED_PRODUCTS.map((item) => ({ ...item })),
-      tradeRequests: []
+      listingReviews: {}
     };
   }
 }
@@ -2592,28 +2243,18 @@ function normalizeCatalog(catalogRaw, deletedCatalogIds = [], includeSeedDefault
   return normalized;
 }
 
-function normalizeTradeRequests(input, validUserIds = new Set()) {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((trade) => ({
-      id: String(trade?.id || crypto.randomUUID()),
-      fromUserId: String(trade?.fromUserId || ""),
-      toUserId: String(trade?.toUserId || ""),
-      sourceItemId: String(trade?.sourceItemId || ""),
-      item: {
-        productId: trade?.item?.productId ? String(trade.item.productId) : null,
-        title: String(trade?.item?.title || "Item"),
-        image: String(trade?.item?.image || fallbackImageForTitle(trade?.item?.title || "item")),
-        valueEach: round2(Math.max(0.01, Number(trade?.item?.valueEach) || 1)),
-        rarity: normalizeRarity(trade?.item?.rarity),
-        conditions: normalizeConditions(trade?.item?.conditions)
-      },
-      status: ["pending", "accepted", "declined"].includes(String(trade?.status || "pending"))
-        ? String(trade.status)
-        : "pending",
-      createdAt: trade?.createdAt || new Date().toISOString()
-    }))
-    .filter((trade) => validUserIds.has(trade.fromUserId) && validUserIds.has(trade.toUserId));
+function normalizeListingReviews(input) {
+  if (!input || typeof input !== "object") return {};
+  const out = {};
+  for (const [productId, reviews] of Object.entries(input)) {
+    const key = String(productId || "").trim();
+    if (!key) continue;
+    const normalized = normalizeReviews(reviews);
+    if (normalized.length) {
+      out[key] = normalized.slice(-500);
+    }
+  }
+  return out;
 }
 
 function normalizeReviews(input) {
@@ -2630,13 +2271,30 @@ function normalizeReviews(input) {
 }
 
 function getEffectiveRating(product) {
-  const reviews = Array.isArray(product?.reviews) ? product.reviews : [];
+  const reviews = getReviewsForProduct(product);
   if (!reviews.length) {
     return clamp(Number(product?.rating) || 4.2, 1, 5);
   }
 
   const total = reviews.reduce((sum, review) => sum + clamp(Number(review.rating) || 1, 1, 5), 0);
   return clamp(round2(total / reviews.length), 1, 5);
+}
+
+function getReviewsForProduct(product) {
+  const embedded = Array.isArray(product?.reviews) ? normalizeReviews(product.reviews) : [];
+  const key = String(product?.id || "");
+  const persisted = key && db.listingReviews && Array.isArray(db.listingReviews[key])
+    ? normalizeReviews(db.listingReviews[key])
+    : [];
+  if (!embedded.length) return persisted;
+  if (!persisted.length) return embedded;
+  const merged = [...embedded, ...persisted];
+  const seen = new Set();
+  return merged.filter((review) => {
+    if (seen.has(review.id)) return false;
+    seen.add(review.id);
+    return true;
+  });
 }
 
 function normalizeCollectionInventory(input) {
@@ -2840,9 +2498,6 @@ function normalizeProgress(progress, catalog) {
     cart,
     orders: Array.isArray(progress.orders) ? progress.orders.slice(0, 50) : [],
     firestoreOrders: Array.isArray(progress.firestoreOrders) ? progress.firestoreOrders.slice(0, 100) : [],
-    friends: normalizeUserIdArray(progress.friends),
-    incomingFriendRequests: normalizeUserIdArray(progress.incomingFriendRequests),
-    outgoingFriendRequests: normalizeUserIdArray(progress.outgoingFriendRequests),
     search: String(progress.search || ""),
     category: categories.includes(progress.category) ? progress.category : "all",
     sort: ["featured", "price-low", "price-high", "rating"].includes(progress.sort) ? progress.sort : "featured"
@@ -2927,7 +2582,8 @@ function persistDb() {
   const payload = {
     users: db.users,
     currentUserId: db.currentUserId,
-    demoListingsPurgedAt: db.demoListingsPurgedAt
+    demoListingsPurgedAt: db.demoListingsPurgedAt,
+    listingReviews: normalizeListingReviews(db.listingReviews)
   };
   localStorage.setItem(DB_KEY, JSON.stringify(payload));
 }

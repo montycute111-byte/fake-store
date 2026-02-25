@@ -525,77 +525,6 @@ label {
   gap: 0.7rem;
 }
 
-.social-panel {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.8rem;
-  margin: 0.8rem 0;
-  display: grid;
-  gap: 0.6rem;
-  background: #f8fbff;
-}
-
-.social-form {
-  display: grid;
-  gap: 0.4rem;
-}
-
-.social-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.social-row input,
-.social-row select {
-  flex: 1;
-}
-
-.social-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.6rem;
-}
-
-.social-grid article {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.55rem;
-  background: #fff;
-  display: grid;
-  gap: 0.45rem;
-}
-
-.social-list {
-  display: grid;
-  gap: 0.4rem;
-}
-
-.social-item {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.45rem;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.45rem;
-  align-items: center;
-}
-
-.social-item-actions {
-  display: flex;
-  gap: 0.35rem;
-}
-
-.social-action {
-  padding: 0.38rem 0.55rem;
-  font-size: 0.8rem;
-}
-
-.social-action.danger {
-  background: #fff2f2;
-  color: #9f1f1f;
-  border-color: #efc7c7;
-}
 
 .collection-card {
   border: 1px solid var(--line);
@@ -634,12 +563,6 @@ label {
   border-color: #b8dcc7;
 }
 
-.collection-trade-btn {
-  margin-top: 0.25rem;
-  background: #eef4ff;
-  color: #1d4f9d;
-  border-color: #c4d6f7;
-}
 
 .rarity {
   display: inline-block;
@@ -1053,14 +976,6 @@ label {
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
 
-  .social-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .social-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
 
   .stats-grid {
     grid-template-columns: 1fr;
@@ -1209,8 +1124,7 @@ button:hover {
 
 .sidebar section,
 .fund-timer,
-.id-shop,
-.social-panel {
+.id-shop {
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 
