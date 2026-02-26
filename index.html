@@ -3,94 +3,125 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fake Bank Game - Account Save</title>
+  <title>Fake Bank Account Simulator</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <script src="/api/firebase-config.js"></script>
-  <script src="firebase-config.js"></script>
-
-  <main class="container">
-    <section id="authScreen" class="card auth-screen">
-      <h1>Sign In To Continue</h1>
-      <p class="muted">Your progress is saved to your account and loads on any device.</p>
-
-      <div class="field">
-        <label for="usernameInput">Username</label>
-        <input id="usernameInput" type="text" autocomplete="username" placeholder="your_username" />
+  <main class="app-shell">
+    <header class="topbar card">
+      <div>
+        <h1>Fake Bank Account Simulator</h1>
+        <p class="sub">Fast-paced but balanced economy</p>
       </div>
-
-      <div class="field">
-        <label for="passwordInput">Password</label>
-        <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Password" />
+      <div class="top-actions">
+        <button id="tabBankBtn" class="tab-btn active">Bank</button>
+        <button id="tabSpendBtn" class="tab-btn">Spend</button>
+        <button id="resetSaveBtn" class="btn danger">Reset Save</button>
       </div>
+    </header>
 
-      <p id="authError" class="error"></p>
-      <p id="setupMessage" class="error"></p>
-
-      <div class="actions">
-        <button id="loginBtn" class="btn">Log In</button>
-        <button id="signupBtn" class="btn btn-secondary">Sign Up</button>
-      </div>
-
-      <hr />
-
-      <div class="actions">
-        <button id="guestBtn" class="btn btn-secondary">Play As Guest</button>
-      </div>
-    </section>
-
-    <section id="gameScreen" class="hidden">
-      <header class="card topbar">
-        <div>
-          <h2>Fake Bank Game</h2>
-          <p id="whoami" class="muted">Not signed in</p>
-          <p id="saveStatus" class="status saved">Saved</p>
-        </div>
-        <div class="actions">
-          <button id="saveNowBtn" class="btn btn-secondary">Save Now</button>
-          <button id="linkGuestBtn" class="btn btn-secondary hidden">Import Guest Progress</button>
-          <button id="logoutBtn" class="btn btn-danger">Logout</button>
-        </div>
-      </header>
-
-      <section class="grid">
+    <section id="bankTab" class="tab-panel">
+      <div class="grid two">
         <article class="card">
-          <h3>Dashboard</h3>
-          <p>Balance: <strong id="balanceText">$0</strong></p>
-          <p>Level: <strong id="levelText">1</strong></p>
-          <p>XP: <strong id="xpText">0</strong></p>
-          <p>Reputation: <strong id="repText">0</strong></p>
-        </article>
-
-        <article class="card">
-          <h3>Main Job</h3>
-          <p id="jobStatus">No active job</p>
-          <p id="jobTimer" class="muted">--:--</p>
-          <div class="actions">
-            <button id="startJobBtn" class="btn">Start Job</button>
-            <button id="claimJobBtn" class="btn btn-secondary" disabled>Claim Job</button>
+          <h2>Dashboard</h2>
+          <div class="balance" id="balanceText">$500</div>
+          <div class="stats-line">
+            <span id="levelText">Lvl 1</span>
+            <span id="xpText">XP 0 / 40</span>
+            <span id="repText">Rep 0</span>
           </div>
-        </article>
-
-        <article class="card">
-          <h3>Actions</h3>
-          <p class="muted">Critical actions save immediately.</p>
-          <div class="actions">
+          <div class="xp-wrap"><div id="xpBar" class="xp-bar"></div></div>
+          <div class="mini-actions">
             <button id="dailyBtn" class="btn">Claim Daily Bonus</button>
-            <button id="buyItemBtn" class="btn btn-secondary">Buy Upgrade ($250)</button>
-            <button id="resetProgressBtn" class="btn btn-danger">Reset Progress</button>
+            <button id="interestBtn" class="btn secondary">Apply Interest</button>
           </div>
+          <p class="hint" id="dailyStatus"></p>
+          <p class="hint" id="interestStatus"></p>
         </article>
 
         <article class="card">
-          <h3>Owned Items</h3>
-          <ul id="inventoryList"></ul>
+          <h2>Main Job</h2>
+          <p id="mainJobStatus">No active main job</p>
+          <p class="timer" id="mainJobTimer">--:--</p>
+          <p class="hint" id="mainFinishAt">Finish: --</p>
+          <button id="claimMainJobBtn" class="btn" disabled>Claim Main Job</button>
+          <p class="hint" id="cooldownStatus"></p>
+          <hr />
+          <h3>Streak</h3>
+          <p id="streakText">Streak: 0 (+0%)</p>
+          <p class="hint" id="streakWindowText">No active streak window</p>
         </article>
-      </section>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <h2>Quick Tasks</h2>
+          <p id="quickQuotaText">Quick tasks left in this window: 3/3</p>
+          <p id="quickTaskStatus">No active quick task</p>
+          <p class="timer" id="quickTaskTimer">--:--</p>
+          <button id="claimQuickTaskBtn" class="btn" disabled>Claim Quick Task</button>
+          <div id="quickTaskBoard" class="list"></div>
+        </article>
+
+        <article class="card">
+          <h2>Opportunities</h2>
+          <p id="opportunityStatus">No active flash contract</p>
+          <p class="timer" id="opportunityTimer">--:--</p>
+          <button id="acceptOpportunityBtn" class="btn" disabled>Accept Opportunity</button>
+          <p class="hint" id="nextOpportunityText">Next roll: --</p>
+        </article>
+      </div>
+
+      <article class="card">
+        <h2>Job Board</h2>
+        <div id="jobBoard" class="list"></div>
+      </article>
+
+      <article class="card">
+        <h2>Transaction Log</h2>
+        <ul id="txLog" class="tx-list"></ul>
+      </article>
     </section>
+
+    <section id="spendTab" class="tab-panel hidden">
+      <div class="grid two">
+        <article class="card">
+          <h2>Boosts</h2>
+          <p id="boostStatus">No active boost</p>
+          <p class="timer" id="boostTimer">--:--</p>
+          <div id="boostShop" class="list"></div>
+        </article>
+
+        <article class="card">
+          <h2>Skills & Training</h2>
+          <p id="skillPointText">Skill Points: 0</p>
+          <p id="trainingCostText">Training Cost: $25,000</p>
+          <button id="buyTrainingBtn" class="btn">Buy +1 Skill Point</button>
+          <div class="skill-grid" id="skillsPanel"></div>
+        </article>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <h2>Businesses</h2>
+          <p class="hint">Passive income is capped to keep active play strongest.</p>
+          <div id="businessPanel" class="list"></div>
+        </article>
+
+        <article class="card">
+          <h2>Coin Flip</h2>
+          <p id="coinFlipStats">Wins: 0 | Losses: 0</p>
+          <label for="coinBetInput">Bet</label>
+          <input id="coinBetInput" type="number" min="1" step="1" value="100" />
+          <button id="coinFlipBtn" class="btn">Flip Coin</button>
+          <p class="hint" id="coinFlipHint"></p>
+        </article>
+      </div>
+    </section>
+
+    <div id="confettiLayer"></div>
   </main>
 
-  <script type="module" src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
