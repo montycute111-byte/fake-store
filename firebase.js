@@ -31,13 +31,24 @@ export {
 
 export function initFirebase() {
   const cfg = window.FIREBASE_CONFIG;
+  const required = ["apiKey", "authDomain", "projectId", "appId"];
+  const missing = required.filter((key) => !cfg?.[key]);
+  const apiKeyExists = Boolean(cfg?.apiKey);
+  const apiKeyLength = apiKeyExists ? String(cfg.apiKey).length : 0;
 
-  if (!cfg || !cfg.apiKey || !cfg.projectId || !cfg.authDomain) {
+  console.info(
+    `[firebase-debug] initFirebase: source=${window.FIREBASE_CONFIG_SOURCE || "unknown"}, apiKeyExists=${apiKeyExists}, apiKeyLength=${apiKeyLength}, missing=${missing.join(",") || "none"}`
+  );
+
+  if (!cfg || missing.length > 0) {
     return {
       ok: false,
-      message:
-        "Missing window.FIREBASE_CONFIG. Add your Firebase web config in index.html before app.js."
+      message: `Missing Firebase config values: ${missing.join(", ")}.`
     };
+  }
+
+  if (!String(cfg.apiKey).startsWith("AIza")) {
+    console.warn("[firebase-debug] apiKey does not start with expected Firebase Web API key prefix (AIza).");
   }
 
   const app = initializeApp(cfg);

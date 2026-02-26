@@ -1,12 +1,5 @@
 const GUEST_STATE_KEY = "fakebank_guest_state_v1";
-const KNOWN_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDKWnvxwIdUAMCuSzhH0eo8P8xkm3fxMm4",
-  authDomain: "betterbanksim.firebaseapp.com",
-  projectId: "betterbanksim",
-  storageBucket: "betterbanksim.firebasestorage.app",
-  messagingSenderId: "948912206805",
-  appId: "1:948912206805:web:2ad1f8c19337b50605c35c"
-};
+const REQUIRED_FIREBASE_KEYS = ["apiKey", "authDomain", "projectId", "appId"];
 
 const dom = {
   authScreen: document.getElementById("authScreen"),
@@ -570,11 +563,23 @@ async function handleAuthState(user) {
 }
 
 async function initFirebaseServices() {
-  // Force known-good project config to avoid stale/incorrect runtime env values.
-  window.FIREBASE_CONFIG = KNOWN_FIREBASE_CONFIG;
-  window.FIREBASE_CONFIG_ERROR = "";
+  const logConfig = (label, cfg) => {
+    const hasApiKey = Boolean(cfg?.apiKey);
+    const apiKeyLen = hasApiKey ? String(cfg.apiKey).length : 0;
+    const missing = REQUIRED_FIREBASE_KEYS.filter((key) => !cfg?.[key]);
+    console.info(
+      `[firebase-debug] ${label}: source=${window.FIREBASE_CONFIG_SOURCE || "unknown"}, apiKeyExists=${hasApiKey}, apiKeyLength=${apiKeyLen}, missing=${missing.join(",") || "none"}`
+    );
+  };
 
-  if (!window.FIREBASE_CONFIG) {
+  const hasRequiredConfig = (cfg) =>
+    Boolean(cfg) && REQUIRED_FIREBASE_KEYS.every((key) => Boolean(cfg[key]));
+
+  if (window.FIREBASE_CONFIG) {
+    logConfig("preloaded-config", window.FIREBASE_CONFIG);
+  }
+
+  if (!hasRequiredConfig(window.FIREBASE_CONFIG)) {
     try {
       const resp = await fetch("/api/firebase-config-data", { cache: "no-store" });
       if (resp.ok) {
@@ -582,19 +587,24 @@ async function initFirebaseServices() {
         if (payload && payload.config) {
           window.FIREBASE_CONFIG = payload.config;
           window.FIREBASE_CONFIG_ERROR = "";
+          window.FIREBASE_CONFIG_SOURCE = payload.source || "api/firebase-config-data";
+          logConfig("fetched-config", window.FIREBASE_CONFIG);
         } else if (payload && payload.error) {
           window.FIREBASE_CONFIG_ERROR = payload.error;
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn("[firebase-debug] failed to fetch /api/firebase-config-data", err);
       // Ignore and fall through to existing message/fallback behavior.
     }
   }
 
-  if (!window.FIREBASE_CONFIG) {
+  if (!hasRequiredConfig(window.FIREBASE_CONFIG)) {
+    const missing = REQUIRED_FIREBASE_KEYS.filter((key) => !window.FIREBASE_CONFIG?.[key]);
     dom.setupMessage.textContent =
       window.FIREBASE_CONFIG_ERROR ||
-      "Firebase is not configured. Add window.FIREBASE_CONFIG to enable cloud login.";
+      `Firebase config missing required fields: ${missing.join(", ")}.`;
+    logConfig("invalid-config", window.FIREBASE_CONFIG);
     return;
   }
 
