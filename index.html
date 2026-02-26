@@ -1,398 +1,96 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MegaCart - Fake Store</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="styles.css?v=20260225e" />
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand-wrap">
-        <h1>MegaCart</h1>
-        <p>Fake items. Free money.</p>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fake Bank Game - Account Save</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <script src="firebase-config.js"></script>
+
+  <main class="container">
+    <section id="authScreen" class="card auth-screen">
+      <h1>Sign In To Continue</h1>
+      <p class="muted">Your progress is saved to your account and loads on any device.</p>
+
+      <div class="field">
+        <label for="emailInput">Email</label>
+        <input id="emailInput" type="email" autocomplete="email" placeholder="you@example.com" />
       </div>
-      <label class="search-wrap" for="searchInput">
-        <input id="searchInput" type="search" placeholder="Search fake products..." />
-      </label>
-      <div class="topbar-actions">
-        <button id="cartToggle" class="cart-btn" type="button">Cart (<span id="cartCount">0</span>)</button>
-        <p id="accountLabel" class="account-label">Not signed in</p>
-        <button id="logoutBtn" class="link-btn hidden" type="button">Log out</button>
+
+      <div class="field">
+        <label for="passwordInput">Password</label>
+        <input id="passwordInput" type="password" autocomplete="current-password" placeholder="Password" />
       </div>
-    </header>
 
-    <section class="tabs">
-      <button id="storeTabBtn" class="tab-btn active" type="button">Store</button>
-      <button id="creditsTabBtn" class="tab-btn" type="button">Add Funds</button>
-      <button id="collectionTabBtn" class="tab-btn" type="button">Collection</button>
-      <button id="trackingTabBtn" class="tab-btn" type="button">Track Packages</button>
-      <button id="bankTabBtn" class="tab-btn" type="button">Bank</button>
-      <button id="statsTabBtn" class="tab-btn" type="button">Stats</button>
-      <button id="friendsTabBtn" class="tab-btn" type="button">Friends</button>
-      <button id="tradesTabBtn" class="tab-btn" type="button">Trades</button>
+      <p id="authError" class="error"></p>
+      <p id="setupMessage" class="error"></p>
+
+      <div class="actions">
+        <button id="loginBtn" class="btn">Log In</button>
+        <button id="signupBtn" class="btn btn-secondary">Sign Up</button>
+        <button id="forgotBtn" class="btn btn-ghost">Forgot Password</button>
+      </div>
+
+      <hr />
+
+      <div class="actions">
+        <button id="guestBtn" class="btn btn-secondary">Play As Guest</button>
+      </div>
     </section>
-    <p id="syncStatusMsg" class="sync-status-msg" aria-live="polite"></p>
 
-    <section id="storeView">
-      <section id="storefrontContent">
-      <main class="layout">
-        <aside class="sidebar panel">
-          <section>
-            <h2>Wallet</h2>
-            <p class="money-label">Balance</p>
-            <p id="walletBalance" class="money-value">$0.00</p>
-            <div class="wallet-actions">
-              <button id="openCreditsBtn" type="button">add funds</button>
-            </div>
-            <p class="hint">Earn through Bank jobs, daily bonus, and hourly interest.</p>
-          </section>
-
-          <section>
-            <h2>Filters</h2>
-            <label for="categoryFilter">Category</label>
-            <select id="categoryFilter">
-              <option value="all">All</option>
-            </select>
-
-            <label for="sortFilter">Sort</label>
-            <select id="sortFilter">
-              <option value="featured">Featured</option>
-              <option value="price-low">Price: Low to High</option>
-              <option value="price-high">Price: High to Low</option>
-              <option value="rating">Top Rated</option>
-            </select>
-          </section>
-
-          <section>
-            <h2>Checkout</h2>
-            <p><strong>Items:</strong> <span id="summaryItems">0</span></p>
-            <p><strong>Total:</strong> <span id="summaryTotal">$0.00</span></p>
-            <button id="checkoutBtn" type="button">Buy</button>
-            <p id="checkoutMsg" class="success-msg" aria-live="polite"></p>
-          </section>
-        </aside>
-
-        <section>
-          <div id="productGrid" class="product-grid"></div>
-        </section>
-
-        <aside id="cartPanel" class="cart panel hidden">
-          <div class="cart-head">
-            <h2>Your Cart</h2>
-            <button id="clearCartBtn" class="link-btn" type="button">Clear</button>
-          </div>
-          <div id="cartItems" class="cart-items"></div>
-        </aside>
-      </main>
-
-      <section class="orders panel">
-        <div class="orders-head">
-          <h2>Recent Orders</h2>
-          <p>Demo only, no real purchases.</p>
+    <section id="gameScreen" class="hidden">
+      <header class="card topbar">
+        <div>
+          <h2>Fake Bank Game</h2>
+          <p id="whoami" class="muted">Not signed in</p>
+          <p id="saveStatus" class="status saved">Saved</p>
         </div>
-        <div id="ordersList" class="orders-list"></div>
-      </section>
-      </section>
-
-      <section id="listingPreview" class="panel hidden">
-        <button id="closePreviewBtn" type="button" class="link-btn">Back to Store</button>
-        <div class="preview-grid">
-          <img id="previewImage" alt="Listing image" class="preview-image" />
-          <div class="preview-info">
-            <h2 id="previewTitle"></h2>
-            <p id="previewMeta" class="hint"></p>
-            <p id="previewPrice" class="money-value"></p>
-            <p id="previewDescription"></p>
-            <ul id="previewFeatures" class="preview-features"></ul>
-            <button id="previewAddToCartBtn" type="button">Add To Cart</button>
-          </div>
+        <div class="actions">
+          <button id="saveNowBtn" class="btn btn-secondary">Save Now</button>
+          <button id="linkGuestBtn" class="btn btn-secondary hidden">Import Guest Progress</button>
+          <button id="logoutBtn" class="btn btn-danger">Logout</button>
         </div>
-
-        <section class="preview-reviews">
-          <h3>Reviews</h3>
-          <div id="previewReviewsList" class="reviews-list"></div>
-          <form id="previewReviewForm" class="review-form">
-            <label>
-              Rating
-              <select name="rating" required>
-                <option value="5">★★★★★ (5)</option>
-                <option value="4">★★★★☆ (4)</option>
-                <option value="3">★★★☆☆ (3)</option>
-                <option value="2">★★☆☆☆ (2)</option>
-                <option value="1">★☆☆☆☆ (1)</option>
-              </select>
-            </label>
-            <label>
-              Review
-              <textarea name="text" maxlength="240" required></textarea>
-            </label>
-            <button type="submit">Post Review</button>
-          </form>
-          <p id="previewReviewMsg" class="success-msg" aria-live="polite"></p>
-        </section>
-      </section>
-    </section>
-
-    <section id="creditsView" class="panel hidden">
-      <header class="credits-head">
-        <h2>Add Funds</h2>
-        <p>Manage utility account items and admin tools.</p>
       </header>
-      <p id="creditsUserLabel" class="hint"></p>
-      <p class="money-label">Current Balance</p>
-      <p id="creditsBalance" class="money-value">$0.00</p>
-      <section class="fund-timer">
-        <p class="hint"><strong>Earnings moved to Bank.</strong> Use the Bank tab for jobs, daily bonus, and account progression.</p>
-      </section>
-      <p id="creditsMsg" class="success-msg" aria-live="polite"></p>
 
-      <section id="adminPanel" class="admin-panel hidden">
-        <header class="admin-head">
-          <h3>Admin Controls (@ronin only)</h3>
-          <p>Add items, set prices, and delete listings.</p>
-        </header>
-        <section class="admin-catalog-tools">
-          <label class="checkbox-row">
-            <input id="adminAutoCatalogToggle" type="checkbox" />
-            <span>
-              <strong>Auto Catalog Generator</strong>
-              <small>Generate a fresh safe catalog each day.</small>
-            </span>
-          </label>
-          <label class="checkbox-row">
-            <input id="adminAiImagesToggle" type="checkbox" />
-            <span>
-              <strong>Generate AI Images</strong>
-              <small>Use server image generation for auto listings.</small>
-            </span>
-          </label>
-          <label>
-            AI images per day
-            <input id="adminAiImageDailyLimitInput" type="number" min="0" max="80" step="1" value="40" />
-          </label>
-          <button id="adminGenerateTodayBtn" type="button">Generate Today Now</button>
-          <p id="adminAutoCatalogStatus" class="hint">Checking auto generation status...</p>
-        </section>
+      <section class="grid">
+        <article class="card">
+          <h3>Dashboard</h3>
+          <p>Balance: <strong id="balanceText">$0</strong></p>
+          <p>Level: <strong id="levelText">1</strong></p>
+          <p>XP: <strong id="xpText">0</strong></p>
+          <p>Reputation: <strong id="repText">0</strong></p>
+        </article>
 
-        <div id="adminListings" class="admin-listings"></div>
-        <div id="adminOrders" class="admin-listings"></div>
-        <p id="adminMsg" class="success-msg" aria-live="polite"></p>
-      </section>
-    </section>
-
-    <section id="collectionView" class="panel hidden">
-      <header class="credits-head">
-        <h2>My Collection</h2>
-        <p>Items appear here after they are delivered.</p>
-      </header>
-      <div id="collectionGrid" class="collection-grid"></div>
-    </section>
-
-    <section id="trackingView" class="panel hidden">
-      <header class="credits-head">
-        <h2>Package Tracking</h2>
-        <p>Live shipping status for your recent orders.</p>
-      </header>
-      <div id="trackingList" class="tracking-list"></div>
-    </section>
-
-    <section id="bankView" class="panel hidden">
-      <header class="credits-head">
-        <h2>Bank</h2>
-        <p>Accept one job at a time, wait, then claim your payout.</p>
-      </header>
-      <p id="bankMsg" class="success-msg" aria-live="polite"></p>
-      <section class="bank-grid">
-        <article class="bank-balance-card">
-          <p class="hint">Balance</p>
-          <p id="bankBalance" class="money-value">$0.00</p>
-          <p class="hint">Level <strong id="bankLevel">1</strong> • Reputation <strong id="bankReputation">0</strong></p>
-          <div class="bank-xp-wrap">
-            <div class="bank-xp-track">
-              <div id="bankXpFill" class="bank-xp-fill"></div>
-            </div>
-            <p id="bankXpLabel" class="hint">XP 0 / 40</p>
+        <article class="card">
+          <h3>Main Job</h3>
+          <p id="jobStatus">No active job</p>
+          <p id="jobTimer" class="muted">--:--</p>
+          <div class="actions">
+            <button id="startJobBtn" class="btn">Start Job</button>
+            <button id="claimJobBtn" class="btn btn-secondary" disabled>Claim Job</button>
           </div>
         </article>
-        <article class="bank-bonus-card">
-          <p class="hint">Daily Bonus</p>
-          <button id="bankDailyBonusBtn" type="button">Claim Daily Bonus</button>
-          <p id="bankDailyBonusStatus" class="hint">Ready</p>
-          <label class="checkbox-row">
-            <input id="bankRiskToggle" type="checkbox" />
-            <span>
-              <strong>Show Risky Jobs</strong>
-              <small>Higher variance outcomes, includes failure cases.</small>
-            </span>
-          </label>
+
+        <article class="card">
+          <h3>Actions</h3>
+          <p class="muted">Critical actions save immediately.</p>
+          <div class="actions">
+            <button id="dailyBtn" class="btn">Claim Daily Bonus</button>
+            <button id="buyItemBtn" class="btn btn-secondary">Buy Upgrade ($250)</button>
+            <button id="resetProgressBtn" class="btn btn-danger">Reset Progress</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Owned Items</h3>
+          <ul id="inventoryList"></ul>
         </article>
       </section>
-      <article id="bankActiveJobCard" class="jobs-active-card"></article>
-      <p id="bankCooldown" class="hint"></p>
-      <section>
-        <h3>Job Board</h3>
-        <div id="bankJobBoard" class="jobs-list"></div>
-      </section>
-      <section>
-        <h3>Recent Transactions</h3>
-        <div id="bankTxLog" class="admin-listings"></div>
-      </section>
     </section>
+  </main>
 
-    <section id="statsView" class="panel hidden">
-      <header class="credits-head">
-        <h2>Stats</h2>
-        <p>Your account totals.</p>
-      </header>
-      <div class="stats-grid">
-        <article class="stats-card">
-          <p class="hint">Total Money Earned</p>
-          <p id="statsEarned" class="money-value">$0.00</p>
-        </article>
-        <article class="stats-card">
-          <p class="hint">Total Money Spent</p>
-          <p id="statsSpent" class="money-value">$0.00</p>
-        </article>
-      </div>
-    </section>
-
-    <section id="friendsView" class="panel hidden">
-      <header class="credits-head">
-        <h2>Friends</h2>
-        <p>Search users, manage requests, and connect.</p>
-      </header>
-      <div class="friends-subtabs">
-        <button id="friendsSearchTabBtn" class="tab-btn active" type="button">Search</button>
-        <button id="friendsRequestsTabBtn" class="tab-btn" type="button">Requests</button>
-        <button id="friendsListTabBtn" class="tab-btn" type="button">Friends List</button>
-        <button id="friendsBlockedTabBtn" class="tab-btn" type="button">Blocked</button>
-      </div>
-      <p id="friendsMsg" class="success-msg" aria-live="polite"></p>
-      <section id="friendsSearchPanel" class="panel">
-        <label>
-          Search by username
-          <input id="friendSearchInput" type="text" maxlength="20" placeholder="username" />
-        </label>
-        <button id="friendSearchBtn" type="button">Search</button>
-        <div id="friendSearchResults" class="admin-listings"></div>
-      </section>
-      <section id="friendsRequestsPanel" class="panel hidden">
-        <h3>Incoming</h3>
-        <div id="friendIncomingList" class="admin-listings"></div>
-        <h3>Outgoing</h3>
-        <div id="friendOutgoingList" class="admin-listings"></div>
-      </section>
-      <section id="friendsListPanel" class="panel hidden">
-        <div id="friendsList" class="admin-listings"></div>
-      </section>
-      <section id="friendsBlockedPanel" class="panel hidden">
-        <div id="friendsBlockedList" class="admin-listings"></div>
-      </section>
-    </section>
-
-    <section id="tradesView" class="panel hidden">
-      <header class="credits-head">
-        <h2>Trades</h2>
-        <p>Trade items and optional money with friends.</p>
-      </header>
-      <p id="tradesMsg" class="success-msg" aria-live="polite"></p>
-      <section class="panel">
-        <h3>New Trade</h3>
-        <label>
-          Friend
-          <select id="newTradeFriendSelect"></select>
-        </label>
-        <label>
-          Offer Money
-          <input id="newTradeMoneyInput" type="number" min="0" max="2000" step="1" value="0" />
-        </label>
-        <p class="hint">Select up to 20 items from your inventory.</p>
-        <div id="newTradeInventoryList" class="admin-listings"></div>
-        <button id="createTradeBtn" type="button">Propose Trade</button>
-      </section>
-      <section class="panel">
-        <h3>My Trades</h3>
-        <div id="tradeEditPanel" class="panel hidden">
-          <h4>Edit My Offer</h4>
-          <p id="tradeEditMeta" class="hint"></p>
-          <label>
-            My Money Offer
-            <input id="tradeEditMoneyInput" type="number" min="0" max="2000" step="1" value="0" />
-          </label>
-          <div id="tradeEditInventoryList" class="admin-listings"></div>
-          <button id="saveTradeOfferBtn" type="button">Save My Offer</button>
-        </div>
-        <div id="myTradesList" class="admin-listings"></div>
-      </section>
-    </section>
-
-    <section id="sendMoneyModal" class="modal hidden">
-      <div class="modal-card panel">
-        <h2>Send Money</h2>
-        <p id="sendMoneyTarget" class="hint"></p>
-        <label>
-          Amount (max 1000)
-          <input id="sendMoneyAmountInput" type="number" min="1" max="1000" step="1" />
-        </label>
-        <label>
-          Note (optional)
-          <input id="sendMoneyNoteInput" type="text" maxlength="80" />
-        </label>
-        <div class="wallet-actions">
-          <button id="sendMoneyConfirmBtn" type="button">Confirm Send</button>
-          <button id="sendMoneyCancelBtn" type="button" class="link-btn">Cancel</button>
-        </div>
-        <p id="sendMoneyMsg" class="success-msg" aria-live="polite"></p>
-      </div>
-    </section>
-
-    <section id="deliveryPopup" class="delivery-popup hidden">
-      <img id="deliveryPopupImage" alt="Delivered item" class="delivery-popup-image" />
-      <p id="deliveryPopupText"></p>
-      <button id="deliveryPopupClose" type="button" class="link-btn">Close</button>
-    </section>
-
-    <section id="authModal" class="modal">
-      <div class="modal-card panel">
-        <h2>Sign In Required</h2>
-        <p>Use username and password. No email needed.</p>
-        <div class="auth-grid">
-          <form id="signupForm" class="stack">
-            <h3>Create Account</h3>
-            <label>
-              Username
-              <input name="username" type="text" maxlength="20" required />
-            </label>
-            <label>
-              Password
-              <input name="password" type="password" minlength="4" maxlength="40" required />
-            </label>
-            <button type="submit">Sign up</button>
-          </form>
-          <form id="loginForm" class="stack">
-            <h3>Log In</h3>
-            <label>
-              Username
-              <input name="username" type="text" maxlength="20" required />
-            </label>
-            <label>
-              Password
-              <input name="password" type="password" minlength="4" maxlength="40" required />
-            </label>
-            <button type="submit">Log in</button>
-          </form>
-        </div>
-        <p id="authMsg" class="success-msg error" aria-live="polite"></p>
-      </div>
-    </section>
-
-  <script src="app.js?v=20260225f"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
