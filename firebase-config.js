@@ -1,9 +1,10 @@
-const firebaseConfig = {
-  apiKey: "AIzaSyBerCDyeJoZ_LHthMIIO20y1n_f80Y5ovs",
-  authDomain: "bank-sim-e1116.firebaseapp.com",
-  projectId: "bank-sim-e1116",
-  storageBucket: "bank-sim-e1116.firebasestorage.app",
-  messagingSenderId: "1007081823271",
-  appId: "1:1007081823271:web:90174d4579f52204e2c202"
+// Force known-good Firebase config to avoid bad/mismatched env runtime values.
+// If you want env-only later, replace this file back with a null fallback.
+window.FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDKWnvxwIdUAMCuSzhH0eo8P8xkm3fxMm4",
+  authDomain: "betterbanksim.firebaseapp.com",
+  projectId: "betterbanksim",
+  storageBucket: "betterbanksim.firebasestorage.app",
+  messagingSenderId: "948912206805",
+  appId: "1:948912206805:web:2ad1f8c19337b50605c35c"
 };
-window.FIREBASE_CONFIG = firebaseConfig;
