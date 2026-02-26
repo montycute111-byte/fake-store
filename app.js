@@ -1,15 +1,22 @@
 const GUEST_STATE_KEY = "fakebank_guest_state_v1";
+const KNOWN_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDKWnvxwIdUAMCuSzhH0eo8P8xkm3fxMm4",
+  authDomain: "betterbanksim.firebaseapp.com",
+  projectId: "betterbanksim",
+  storageBucket: "betterbanksim.firebasestorage.app",
+  messagingSenderId: "948912206805",
+  appId: "1:948912206805:web:2ad1f8c19337b50605c35c"
+};
 
 const dom = {
   authScreen: document.getElementById("authScreen"),
   gameScreen: document.getElementById("gameScreen"),
-  emailInput: document.getElementById("emailInput"),
+  usernameInput: document.getElementById("usernameInput") || document.getElementById("emailInput"),
   passwordInput: document.getElementById("passwordInput"),
   authError: document.getElementById("authError"),
   setupMessage: document.getElementById("setupMessage"),
   loginBtn: document.getElementById("loginBtn"),
   signupBtn: document.getElementById("signupBtn"),
-  forgotBtn: document.getElementById("forgotBtn"),
   guestBtn: document.getElementById("guestBtn"),
 
   whoami: document.getElementById("whoami"),
@@ -256,14 +263,33 @@ function setAuthError(msg) {
 
 function formatError(err) {
   const code = err?.code || "";
-  if (code.includes("invalid-credential")) return "Invalid email or password.";
-  if (code.includes("wrong-password")) return "Invalid email or password.";
-  if (code.includes("user-not-found")) return "No account found for that email.";
-  if (code.includes("email-already-in-use")) return "Email already in use.";
+  if (code.includes("invalid-credential")) return "Invalid username or password.";
+  if (code.includes("wrong-password")) return "Invalid username or password.";
+  if (code.includes("user-not-found")) return "No account found for that username.";
+  if (code.includes("email-already-in-use")) return "Username already in use.";
   if (code.includes("weak-password")) return "Password must be at least 6 characters.";
-  if (code.includes("invalid-email")) return "Invalid email address.";
+  if (code.includes("invalid-email")) return "Invalid username.";
   if (code.includes("too-many-requests")) return "Too many attempts. Try again later.";
+  if (code.includes("unauthorized-domain")) return "This domain is not authorized in Firebase Auth settings.";
+  if (code.includes("network-request-failed")) return "Network error. Check connection and try again.";
+  if (code.includes("operation-not-allowed")) return "Email/Password sign-in is disabled in Firebase.";
+  if (code.includes("permission-denied")) return "Firestore permission denied. Check your security rules.";
   return "Something went wrong. Please try again.";
+}
+
+function usernameToEmail(usernameRaw) {
+  const username = (usernameRaw || "").trim().toLowerCase();
+  if (!username) return null;
+  if (username.includes("@")) return username;
+
+  // Keep username auth simple while still using Firebase email/password under the hood.
+  const safe = username.replace(/[^a-z0-9._-]/g, "");
+  if (!safe || safe.length < 3) return null;
+  return `${safe}@player.fakebank.local`;
+}
+
+function getLoginIdentifier() {
+  return dom.usernameInput ? dom.usernameInput.value : "";
 }
 
 function xpToNext(level) {
@@ -433,14 +459,21 @@ function bindAuthEvents() {
       return;
     }
 
+    const loginEmail = usernameToEmail(getLoginIdentifier());
+    if (!loginEmail) {
+      setAuthError("Enter a valid username (at least 3 letters/numbers).");
+      return;
+    }
+
     try {
       await firebaseApi.signInWithEmailAndPassword(
         auth,
-        dom.emailInput.value.trim(),
+        loginEmail,
         dom.passwordInput.value
       );
     } catch (err) {
-      setAuthError(formatError(err));
+      const pretty = formatError(err);
+      setAuthError(`${pretty}${err?.code ? ` (${err.code})` : ""}`);
     }
   });
 
@@ -451,35 +484,21 @@ function bindAuthEvents() {
       return;
     }
 
+    const signupEmail = usernameToEmail(getLoginIdentifier());
+    if (!signupEmail) {
+      setAuthError("Choose a valid username (at least 3 letters/numbers).");
+      return;
+    }
+
     try {
       await firebaseApi.createUserWithEmailAndPassword(
         auth,
-        dom.emailInput.value.trim(),
+        signupEmail,
         dom.passwordInput.value
       );
     } catch (err) {
-      setAuthError(formatError(err));
-    }
-  });
-
-  dom.forgotBtn.addEventListener("click", async () => {
-    setAuthError("");
-    if (!auth || !firebaseReady) {
-      setAuthError("Cloud auth is not set up yet. Use Play As Guest.");
-      return;
-    }
-
-    const email = dom.emailInput.value.trim();
-    if (!email) {
-      setAuthError("Enter your email first.");
-      return;
-    }
-
-    try {
-      await firebaseApi.sendPasswordResetEmail(auth, email);
-      setAuthError("Password reset email sent.");
-    } catch (err) {
-      setAuthError(formatError(err));
+      const pretty = formatError(err);
+      setAuthError(`${pretty}${err?.code ? ` (${err.code})` : ""}`);
     }
   });
 
@@ -494,6 +513,15 @@ function bindAuthEvents() {
     setSaveStatus("saved");
     render();
   });
+
+  if (dom.passwordInput) {
+    dom.passwordInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        dom.loginBtn.click();
+      }
+    });
+  }
 }
 
 async function handleAuthState(user) {
@@ -519,21 +547,53 @@ async function handleAuthState(user) {
     const loaded = await loadUserGameState(user.uid);
     applyLoadedGameState(loaded);
 
-    dom.whoami.textContent = `${user.email || "Account"}`;
+    const displayName = user.email ? user.email.split("@")[0] : "Account";
+    dom.whoami.textContent = displayName;
     dom.linkGuestBtn.classList.toggle("hidden", !pendingGuestStateForLink);
 
     showGameScreen();
     setSaveStatus("saved");
     render();
-  } catch {
+  } catch (err) {
+    // If auth succeeded but Firestore read/write failed, still let the player in.
+    applyLoadedGameState(getDefaultGameState());
+    const displayName = user.email ? user.email.split("@")[0] : "Account";
+    dom.whoami.textContent = displayName;
+    dom.linkGuestBtn.classList.add("hidden");
+    showGameScreen();
+    render();
+
     setSaveStatus("offline");
-    setAuthError("Failed to load cloud save. Check connection and try again.");
+    const pretty = formatError(err);
+    setAuthError(`Logged in, but cloud save failed: ${pretty}${err?.code ? ` (${err.code})` : ""}`);
   }
 }
 
 async function initFirebaseServices() {
+  // Force known-good project config to avoid stale/incorrect runtime env values.
+  window.FIREBASE_CONFIG = KNOWN_FIREBASE_CONFIG;
+  window.FIREBASE_CONFIG_ERROR = "";
+
+  if (!window.FIREBASE_CONFIG) {
+    try {
+      const resp = await fetch("/api/firebase-config-data", { cache: "no-store" });
+      if (resp.ok) {
+        const payload = await resp.json();
+        if (payload && payload.config) {
+          window.FIREBASE_CONFIG = payload.config;
+          window.FIREBASE_CONFIG_ERROR = "";
+        } else if (payload && payload.error) {
+          window.FIREBASE_CONFIG_ERROR = payload.error;
+        }
+      }
+    } catch {
+      // Ignore and fall through to existing message/fallback behavior.
+    }
+  }
+
   if (!window.FIREBASE_CONFIG) {
     dom.setupMessage.textContent =
+      window.FIREBASE_CONFIG_ERROR ||
       "Firebase is not configured. Add window.FIREBASE_CONFIG to enable cloud login.";
     return;
   }
