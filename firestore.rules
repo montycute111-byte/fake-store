@@ -1,19 +1,115 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid && isValidUserDoc();
+    function signedIn() {
+      return request.auth != null;
+    }
 
-      function isValidUserDoc() {
-        return request.resource.data.keys().hasOnly([
+    function isMe(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function hasOnlyKeys(data, keys) {
+      return data.keys().hasOnly(keys);
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isMe(uid)
+        && hasOnlyKeys(request.resource.data, [
           'email',
+          'username',
+          'usernameLower',
+          'displayName',
+          'photoURL',
           'createdAt',
           'updatedAt',
+          'lastActiveAt',
+          'balance',
+          'blocked',
           'gameState'
         ])
-        && request.resource.data.email is string
-        && request.resource.data.gameState is map;
-      }
+        && request.resource.data.username is string
+        && request.resource.data.usernameLower is string
+        && request.resource.data.displayName is string
+        && request.resource.data.balance is number
+        && (!('gameState' in request.resource.data) || request.resource.data.gameState is map);
+      allow delete: if false;
+    }
+
+    match /usernames/{usernameLower} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt']);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /friendRequests/{requestId} {
+      allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update: if signedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid
+        && request.resource.data.status in ['pending', 'accepted', 'declined', 'canceled'];
+      allow delete: if false;
+    }
+
+    match /friends/{uid}/list/{friendUid} {
+      allow read, write: if isMe(uid);
+    }
+
+    match /inventories/{uid} {
+      allow read, write: if isMe(uid);
+    }
+
+    match /activeBoosts/{uid} {
+      allow read: if isMe(uid);
+      allow create, update: if isMe(uid)
+        && request.resource.data.keys().hasOnly(['boosts', 'updatedAt'])
+        && request.resource.data.boosts is map
+        && request.resource.data.boosts.size() <= 6;
+      allow delete: if false;
+    }
+
+    match /trades/{tradeId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.participants;
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.participants.size() == 2
+        && request.resource.data.participants.hasAll([request.resource.data.fromUid, request.resource.data.toUid]);
+      allow update: if signedIn()
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid
+        && request.resource.data.offer == resource.data.offer
+        && request.resource.data.request == resource.data.request
+        && (
+          (request.auth.uid == resource.data.toUid && request.resource.data.status in ['accepted', 'declined'])
+          || (request.auth.uid == resource.data.fromUid && request.resource.data.status == 'canceled')
+        );
+      allow delete: if false;
+    }
+
+    match /transfers/{transferId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.participants;
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.participants.size() == 2
+        && request.resource.data.participants.hasAll([request.resource.data.fromUid, request.resource.data.toUid]);
+      allow update, delete: if false;
     }
   }
 }
