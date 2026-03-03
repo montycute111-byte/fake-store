@@ -31,15 +31,7 @@
     { id: "support", name: "Customer Support Reply", durationSec: 50, basePay: 45 }
   ];
 
-  const BOOST_SHOP = [
-    { id: "focus", name: "Work Focus", baseCost: 2500, type: "moneyMultiplier", value: 0.15, durationMs: 5 * 60 * 1000 },
-    { id: "drink", name: "Energy Drink", baseCost: 3000, type: "cooldownReduction", value: 0.15, durationMs: 5 * 60 * 1000 },
-    { id: "charm", name: "Lucky Charm", baseCost: 4000, type: "luckBonus", value: 0.10, durationMs: 5 * 60 * 1000 }
-  ];
-
   const POWER_DURATION_MS = 21 * 60 * 60 * 1000;
-  const MAX_ACTIVE_POWER_BOOSTS = 6;
-  const MAX_POWER_PURCHASES_PER_MIN = 6;
 
   const ITEM_CATALOG = [
     {
@@ -78,94 +70,6 @@
       icon: "🪙",
       boost: { type: "luckBonus", value: 0.08, durationMs: 21 * 60 * 60 * 1000 }
     },
-    {
-      id: "quantum_payday",
-      name: "Quantum Payday",
-      price: 250000,
-      rarity: "Mythic",
-      description: "Power Item: +250% ALL passive income payouts.",
-      maxStack: 3,
-      icon: "🧬",
-      category: "power",
-      power: { effect: "passiveIncomeMultiplier", value: 2.5, stackable: true, maxStacks: 3 }
-    },
-    {
-      id: "double_dip_rewards",
-      name: "Double Dip Rewards",
-      price: 180000,
-      rarity: "Legendary",
-      description: "Power Item: Adds an extra +80% payout on reward triggers.",
-      maxStack: 1,
-      icon: "🎁",
-      category: "power",
-      power: { effect: "duplicatePayoutFactor", value: 0.8, stackable: false, maxStacks: 1 }
-    },
-    {
-      id: "lucky_magnet",
-      name: "Lucky Magnet",
-      price: 220000,
-      rarity: "Legendary",
-      description: "Power Item: Strongly boosts high-roll chances.",
-      maxStack: 2,
-      icon: "🧲",
-      category: "power",
-      power: { effect: "luckyMagnet", value: 1, stackable: true, maxStacks: 2 }
-    },
-    {
-      id: "overclock_mode",
-      name: "Overclock Mode",
-      price: 260000,
-      rarity: "Mythic",
-      description: "Power Item: Reduces timers/cooldowns by 40%.",
-      maxStack: 1,
-      icon: "🚀",
-      category: "power",
-      power: { effect: "cooldownMultiplier", value: 0.6, stackable: false, maxStacks: 1 }
-    },
-    {
-      id: "black_friday_pass",
-      name: "Black Friday Pass",
-      price: 200000,
-      rarity: "Epic",
-      description: "Power Item: Shop prices -35% (floor factor 0.75).",
-      maxStack: 1,
-      icon: "🛍️",
-      category: "power",
-      power: { effect: "shopDiscountFactor", value: 0.65, stackable: false, maxStacks: 1 }
-    },
-    {
-      id: "vault_insurance",
-      name: "Vault Insurance",
-      price: 300000,
-      rarity: "Mythic",
-      description: "Power Item: Immunity to penalty loss events.",
-      maxStack: 1,
-      icon: "🛡️",
-      category: "power",
-      power: { effect: "lossImmunity", value: 1, stackable: false, maxStacks: 1 }
-    },
-    {
-      id: "instant_delivery_token",
-      name: "Instant Delivery Token",
-      price: 150000,
-      rarity: "Epic",
-      description: "Power Item: +5 instant-delivery charges while active.",
-      maxStack: 3,
-      icon: "📦",
-      category: "power",
-      power: { effect: "instantDeliveryCharges", value: 5, stackable: true, maxStacks: 3 }
-    },
-    {
-      id: "mega_inventory_expand",
-      name: "Mega Inventory Expand",
-      price: 175000,
-      rarity: "Rare",
-      description: "Power Item: +200 inventory capacity while active.",
-      maxStack: 1,
-      icon: "🗄️",
-      category: "power",
-      power: { effect: "inventoryCapacityBonus", value: 200, stackable: false, maxStacks: 1 }
-    }
   ];
 
   const CARRIERS = ["USPS", "UPS", "FedEx", "DHL", "MegaShip"];
@@ -185,7 +89,6 @@
   ];
 
   const SKILL_CAPS = { efficiency: 10, speed: 10, luck: 10, charisma: 30 };
-  const POWER_ITEM_BY_ID = Object.fromEntries(ITEM_CATALOG.filter((x) => x.category === "power").map((x) => [x.id, x]));
 
   const dom = {
     authScreen: document.getElementById("authScreen"),
@@ -255,9 +158,6 @@
     nextOpportunityText: document.getElementById("nextOpportunityText"),
 
     txLog: document.getElementById("txLog"),
-
-    boostStatus: document.getElementById("boostStatus"),
-    boostShop: document.getElementById("boostShop"),
     skillPointText: document.getElementById("skillPointText"),
     trainingCostText: document.getElementById("trainingCostText"),
     buyTrainingBtn: document.getElementById("buyTrainingBtn"),
@@ -287,8 +187,6 @@
     storeList: document.getElementById("storeList"),
     shopLastUpdated: document.getElementById("shopLastUpdated"),
     inventoryList: document.getElementById("inventoryList"),
-    activeBoostList: document.getElementById("activeBoostList"),
-    effectiveModsText: document.getElementById("effectiveModsText"),
     ordersList: document.getElementById("ordersList"),
     trackPanel: document.getElementById("trackPanel"),
     trackingSearchInput: document.getElementById("trackingSearchInput"),
@@ -743,21 +641,6 @@
             progressApiProxyAvailable = false;
           }
         }
-      } else if (hasServerSession()) {
-        try {
-          const data = await postJson("/api/progress/load", {
-            username: serverSession.username,
-            password: serverSession.password
-          });
-          progressApiProxyAvailable = true;
-          if (data && Object.prototype.hasOwnProperty.call(data, "document")) {
-            return data.document || null;
-          }
-        } catch (err) {
-          if (err?.status === 404) {
-            progressApiProxyAvailable = false;
-          }
-        }
       }
     }
 
@@ -787,21 +670,6 @@
             balance: Number(gameState.bankBalance || 0),
             gameState
           }, await getAuthApiHeaders());
-          progressApiProxyAvailable = true;
-          return data;
-        } catch (err) {
-          if (err?.status !== 404) {
-            throw err;
-          }
-          progressApiProxyAvailable = false;
-        }
-      } else if (hasServerSession()) {
-        try {
-          const data = await postJson("/api/progress/save", {
-            username: serverSession.username,
-            password: serverSession.password,
-            progress: gameState
-          });
           progressApiProxyAvailable = true;
           return data;
         } catch (err) {
@@ -1472,6 +1340,8 @@
   }
 
   async function flushCloudSave(force = false, reason = "autosave") {
+    let rateLimited = false;
+
     if (localAuthMode) {
       saveLocalState();
       setSaveStatus("saved", "local");
@@ -1490,8 +1360,11 @@
 
     const now = Date.now();
     if (nextCloudSaveAllowedAt && now < nextCloudSaveAllowedAt) {
-      if (cloudDirty) scheduleAutosave(reason);
       setSaveStatus("offline", "backoff");
+      logSaveEvent("backoff-skip", {
+        reason,
+        retryInMs: nextCloudSaveAllowedAt - now
+      });
       return;
     }
 
@@ -1521,42 +1394,6 @@
       sinceLastAttempt
     });
 
-    if (hasServerSession() && !(firebaseReady && currentUid && auth?.currentUser)) {
-      try {
-        await withTimeout(
-          postJson("/api/progress/save", {
-            username: serverSession.username,
-            password: serverSession.password,
-            progress: payload
-          }),
-          5000,
-          "server-save-timeout"
-        );
-        serverReachable = true;
-        finalizeSuccessfulSave(payload);
-        setSaveStatus("saved", "server");
-        logSaveEvent("success", { reason, target: "server" });
-        return;
-      } catch (err) {
-        cloudDirty = true;
-        serverReachable = false;
-        const detail = err?.code || err?.message || "server-save-failed";
-        if (isRateLimitError(err)) {
-          registerRateLimit(reason, detail);
-          return;
-        }
-        setSaveStatus(
-          navigator.onLine ? "error" : "offline",
-          detail
-        );
-        logSaveEvent("error", { reason, detail, status: err?.status || null });
-        return;
-      } finally {
-        saveInFlight = false;
-        if (cloudDirty) scheduleAutosave(reason);
-      }
-    }
-
     if (firebaseReady && currentUid && auth?.currentUser) {
       try {
         await withTimeout(
@@ -1577,9 +1414,10 @@
           cloudDirty = true;
           const detail = err?.code || err?.message || "cloud-save-failed";
           if (isRateLimitError(err)) {
+            rateLimited = true;
             registerRateLimit(reason, detail);
             saveInFlight = false;
-            if (cloudDirty && nextCloudSaveAllowedAt) scheduleAutosave(reason);
+            logSaveEvent("rate-limited", { reason, detail, target: "rest" });
             return;
           }
           setSaveStatus(
@@ -1623,6 +1461,7 @@
       cloudDirty = true;
       const detail = err?.code || err?.message || "unknown";
       if (isRateLimitError(err)) {
+        rateLimited = true;
         registerRateLimit(reason, detail);
         return;
       }
@@ -1633,7 +1472,7 @@
       logSaveEvent("error", { reason, detail, status: err?.status || null });
     } finally {
       saveInFlight = false;
-      if (cloudDirty) scheduleAutosave(reason);
+      if (cloudDirty && !rateLimited) scheduleAutosave(reason);
     }
   }
 
@@ -1646,7 +1485,7 @@
     if (cloudHydrationInFlight) {
       return;
     }
-    if ((!firebaseReady || !currentUid) && !hasServerSession()) {
+    if (!firebaseReady || !currentUid || !auth?.currentUser) {
       return;
     }
     if (backoffAttemptCount > MAX_AUTOMATIC_RATE_RETRIES) {
@@ -1663,8 +1502,12 @@
     if (saveInFlight) {
       return;
     }
-    const timing = getAutosaveTimings(reason);
     const now = Date.now();
+    if (nextCloudSaveAllowedAt && now < nextCloudSaveAllowedAt) {
+      setSaveStatus("offline", "backoff");
+      return;
+    }
+    const timing = getAutosaveTimings(reason);
     const nextAt = Math.max(
       now + timing.debounceMs,
       lastCloudSaveAt ? lastCloudSaveAt + timing.minIntervalMs : 0,
@@ -1685,33 +1528,11 @@
   }
 
   async function flushServerMirrorSave(reason = "server-mirror") {
-    if (!hasServerSession()) return;
-    try {
-      const payload = pendingCloudSnapshot || exportGameStateForSave();
-      logSaveEvent("mirror-attempt", {
-        reason,
-        payloadSize: estimatePayloadSize(payload),
-        sinceLastAttempt: lastSaveAttemptAt ? Date.now() - lastSaveAttemptAt : null
-      });
-      await postJson("/api/progress/save", {
-        username: serverSession.username,
-        password: serverSession.password,
-        progress: payload
-      });
-      serverReachable = true;
-      logSaveEvent("mirror-success", { reason });
-    } catch {
-      serverReachable = false;
-      logSaveEvent("mirror-error", { reason });
-    }
+    return;
   }
 
   function scheduleServerMirrorSave(reason = "server-mirror") {
-    if (!hasServerSession()) return;
-    clearTimeout(serverMirrorSaveTimer);
-    serverMirrorSaveTimer = setTimeout(() => {
-      flushServerMirrorSave(reason);
-    }, 700);
+    return;
   }
 
 
@@ -1720,7 +1541,7 @@
       saveLocalState();
       return;
     }
-    if (cloudDirty && !saveInFlight && (hasServerSession() || (firebaseReady && currentUid))) {
+    if (cloudDirty && !saveInFlight && firebaseReady && currentUid && auth?.currentUser) {
       flushCloudSave(true, "flush-pending");
     }
   }
@@ -2128,11 +1949,11 @@
       out[id] = {
         id: raw.id || id,
         itemId: raw.itemId || raw.id || id,
-        name: raw.name || POWER_ITEM_BY_ID[raw.itemId || id]?.name || id,
-        type: raw.type || POWER_ITEM_BY_ID[raw.itemId || id]?.power?.effect || "custom",
-        value: Number(raw.value || POWER_ITEM_BY_ID[raw.itemId || id]?.power?.value || 0),
+        name: raw.name || raw.itemId || id,
+        type: raw.type || "custom",
+        value: Number(raw.value || 0),
         startedAt: purchasedAtMs || Date.now(),
-        endsAt: expiresAtMs || (Date.now() + POWER_DURATION_MS),
+        endsAt: expiresAtMs || Date.now(),
         stacks: Math.max(1, Math.floor(Number(raw.stacks || 1))),
         remainingUses: raw.remainingUses !== undefined ? Math.max(0, Math.floor(Number(raw.remainingUses || 0))) : undefined,
         meta: raw.meta && typeof raw.meta === "object" ? raw.meta : {},
@@ -2844,21 +2665,6 @@
     for (const boost of Object.values(state.activeBoosts)) {
       const expiresMs = stampMs(boost.endsAt);
       if (expiresMs && now >= expiresMs) continue;
-      const stacks = Math.max(1, Math.floor(Number(boost.stacks || 1)));
-      const powerId = String(boost.itemId || boost.id || "");
-
-      if (powerId === "quantum_payday") effects.passiveIncomeMultiplier = Math.max(effects.passiveIncomeMultiplier, 1 + 2.5);
-      if (powerId === "double_dip_rewards") effects.duplicatePayoutFactor = Math.max(effects.duplicatePayoutFactor, 0.8);
-      if (powerId === "lucky_magnet") {
-        const magnetBonus = stacks >= 2 ? 2.25 + 0.35 : 2.25;
-        effects.rarityChanceMultiplier = Math.max(effects.rarityChanceMultiplier, magnetBonus);
-      }
-      if (powerId === "overclock_mode") effects.cooldownMultiplier = Math.min(effects.cooldownMultiplier, 0.60);
-      if (powerId === "black_friday_pass") effects.shopDiscountFactor = Math.min(effects.shopDiscountFactor, 0.65);
-      if (powerId === "vault_insurance") effects.lossImmunity = true;
-      if (powerId === "instant_delivery_token") effects.instantDeliveryCharges += Math.max(0, Math.floor(Number(boost?.meta?.charges || 0)));
-      if (powerId === "mega_inventory_expand") effects.inventoryCapacityBonus = Math.max(effects.inventoryCapacityBonus, 200);
-
       if (boost.type === "moneyMultiplier") effects.payoutMultiplier *= (1 + Number(boost.value || 0));
       if (boost.type === "payoutBonusNextN" && (boost.remainingUses || 0) > 0) effects.payoutBonusNextN += Number(boost.value || 0);
       if (boost.type === "cooldownReduction") effects.cooldownMultiplier *= Math.max(0.60, 1 - Number(boost.value || 0));
@@ -3181,37 +2987,6 @@
     MAIN_JOBS.push(tempJob);
     acceptMainJob(tempJob.id, true);
     MAIN_JOBS.pop();
-  }
-
-  function boostCost(boost) {
-    return Math.round(boost.baseCost * (1 + (state.bankLevel - 1) * 0.08));
-  }
-
-  function buyBoost(boostId) {
-    const now = Date.now();
-    const boost = BOOST_SHOP.find((b) => b.id === boostId);
-    if (!boost) return;
-
-    const cost = boostCost(boost);
-    if (state.bankBalance < cost) {
-      toast("Not enough money for boost.");
-      return;
-    }
-
-    state.bankBalance -= cost;
-    const entryId = uniqueId(`boost_${boost.id}`);
-    state.activeBoosts[entryId] = {
-      itemId: boost.id,
-      type: boost.type,
-      value: boost.value,
-      startedAt: now,
-      endsAt: now + boost.durationMs
-    };
-
-    addTx("boost_purchase", -cost, { boost: boost.name });
-    saveState();
-    render();
-    toast(`${boost.name} activated.`);
   }
 
   function getTrainingCost() {
@@ -3598,200 +3373,6 @@
     return 200 + (mods.inventoryCapacityBonus || 0);
   }
 
-  function canBuyPowerItem(item, now = Date.now()) {
-    if (!item || item.category !== "power") return true;
-    const activeBoosts = Object.values(state.activeBoosts || {}).filter((b) => stampMs(b.endsAt) > now);
-    const activeCount = activeBoosts.length;
-    const existing = state.activeBoosts?.[item.id];
-    const stacks = Math.max(1, Math.floor(Number(existing?.stacks || 1)));
-    const maxStacks = Math.max(1, Number(item.power?.maxStacks || 1));
-    const activeExisting = existing && stampMs(existing.endsAt) > now;
-    if (!activeExisting && activeCount >= MAX_ACTIVE_POWER_BOOSTS) return false;
-    if (activeExisting && item.power?.stackable && stacks >= maxStacks) return false;
-    return true;
-  }
-
-  async function cleanupExpiredCloudBoosts(nowMs = Date.now()) {
-    if (!firebaseReady || !currentUid) return;
-    const ref = activeBoostsDocRef(currentUid);
-    const snap = await firebaseApi.getDoc(ref);
-    if (!snap.exists()) return;
-    const boosts = snap.data()?.boosts || {};
-    const next = {};
-    let changed = false;
-    for (const [id, b] of Object.entries(boosts)) {
-      const exp = stampMs(b?.expiresAt);
-      if (exp && nowMs >= exp) {
-        changed = true;
-        continue;
-      }
-      next[id] = b;
-    }
-    if (changed) {
-      await firebaseApi.setDoc(ref, { boosts: next, updatedAt: firebaseApi.serverTimestamp() }, { merge: true });
-      state.activeBoosts = normalizeBoostMap(next);
-      saveLocalState();
-    }
-  }
-
-  async function applyPowerBoostPurchase(item) {
-    if (!item || item.category !== "power") return false;
-    if (!firebaseReady || !currentUid) throw new Error("Power Items require cloud login.");
-
-    const now = Date.now();
-    const windowStart = now - 60 * 1000;
-    state.powerPurchaseWindow = (state.powerPurchaseWindow || []).filter((ts) => ts >= windowStart);
-    if (state.powerPurchaseWindow.length >= MAX_POWER_PURCHASES_PER_MIN) {
-      throw new Error("Rate limit reached. Try again in a minute.");
-    }
-
-    const uid = currentUid;
-    const userRef = userDocRef(uid);
-    const invRef = inventoryDocRef(uid);
-    const boostRef = activeBoostsDocRef(uid);
-    const itemId = item.id;
-    const itemPrice = getItemPrice(item);
-
-    let needsFinalizeTimestamp = false;
-
-    await firebaseApi.runTransaction(db, async (tx) => {
-      const [userSnap, invSnap, boostSnap] = await Promise.all([
-        tx.get(userRef),
-        tx.get(invRef),
-        tx.get(boostRef)
-      ]);
-      const bal = Number(userSnap.data()?.balance ?? state.bankBalance ?? 0);
-      if (bal < itemPrice) throw new Error("Not enough money for this Power Item.");
-
-      const invItems = { ...(invSnap.data()?.items || state.inventory || {}) };
-      const invSlots = countInventorySlots(invItems);
-      const hasItemSlot = Boolean(invItems[itemId]);
-      const cap = maxInventorySlots();
-      if (!hasItemSlot && invSlots >= cap) {
-        throw new Error(`Inventory full (${cap} slots).`);
-      }
-      const boostMap = { ...(boostSnap.data()?.boosts || {}) };
-      const activeCount = Object.values(boostMap).filter((b) => {
-        const exp = stampMs(b?.expiresAt);
-        return exp ? exp > now : true;
-      }).length;
-
-      const existing = boostMap[itemId] || null;
-      const powerCfg = item.power || {};
-      const stackable = Boolean(powerCfg.stackable);
-      const maxStacks = Math.max(1, Number(powerCfg.maxStacks || 1));
-      const existingStacks = Math.max(1, Math.floor(Number(existing?.stacks || 1)));
-      const existingExpiryMs = stampMs(existing?.expiresAt);
-      const stillActive = existingExpiryMs > now;
-
-      if ((!existing || !stillActive) && activeCount >= MAX_ACTIVE_POWER_BOOSTS) {
-        throw new Error("Maximum active boosts reached (6).");
-      }
-
-      if (!invItems[itemId]) invItems[itemId] = { qty: 0 };
-      invItems[itemId].qty = Math.min(item.maxStack || 99, Number(invItems[itemId].qty || 0) + 1);
-
-      const nextEntry = {
-        id: itemId,
-        itemId,
-        name: item.name,
-        type: powerCfg.effect || "custom",
-        value: Number(powerCfg.value || 0),
-        purchasedAt: firebaseApi.serverTimestamp(),
-        expiresAt: firebaseApi.Timestamp.fromMillis(now + POWER_DURATION_MS),
-        stacks: 1,
-        meta: existing?.meta && typeof existing.meta === "object" ? { ...existing.meta } : {}
-      };
-
-      if (stillActive) {
-        if (stackable) {
-          const nextStacks = Math.min(maxStacks, existingStacks + 1);
-          nextEntry.stacks = nextStacks;
-          nextEntry.expiresAt = firebaseApi.Timestamp.fromMillis(
-            (existingExpiryMs || now) + (nextStacks > existingStacks ? POWER_DURATION_MS : 0)
-          );
-        } else {
-          nextEntry.stacks = 1;
-          needsFinalizeTimestamp = true;
-        }
-      } else {
-        needsFinalizeTimestamp = true;
-      }
-
-      if (itemId === "instant_delivery_token") {
-        const prevCharges = Math.max(0, Math.floor(Number(existing?.meta?.charges || 0)));
-        nextEntry.meta.charges = prevCharges + 5;
-      }
-
-      tx.set(userRef, {
-        balance: bal - itemPrice,
-        lastActiveAt: firebaseApi.serverTimestamp(),
-        gameState: { ...state, bankBalance: bal - itemPrice }
-      }, { merge: true });
-      tx.set(invRef, { items: invItems }, { merge: true });
-      tx.set(boostRef, {
-        boosts: { ...boostMap, [itemId]: nextEntry },
-        updatedAt: firebaseApi.serverTimestamp()
-      }, { merge: true });
-    });
-
-    if (needsFinalizeTimestamp) {
-      await firebaseApi.runTransaction(db, async (tx) => {
-        const snap = await tx.get(boostRef);
-        const map = { ...(snap.data()?.boosts || {}) };
-        const entry = map[itemId];
-        if (!entry) return;
-        const purchasedAtMs = stampMs(entry.purchasedAt) || Date.now();
-        entry.expiresAt = firebaseApi.Timestamp.fromMillis(purchasedAtMs + POWER_DURATION_MS);
-        map[itemId] = entry;
-        tx.set(boostRef, { boosts: map, updatedAt: firebaseApi.serverTimestamp() }, { merge: true });
-      });
-    }
-
-    const [userPost, invPost, boostPost] = await Promise.all([
-      firebaseApi.getDoc(userRef),
-      firebaseApi.getDoc(invRef),
-      firebaseApi.getDoc(boostRef)
-    ]);
-    if (userPost.exists()) state.bankBalance = Number(userPost.data()?.balance ?? state.bankBalance);
-    if (invPost.exists()) state.inventory = invPost.data()?.items || state.inventory;
-    if (boostPost.exists()) state.activeBoosts = normalizeBoostMap(boostPost.data()?.boosts || {});
-    state.powerPurchaseWindow.push(now);
-    state.powerPurchaseWindow = state.powerPurchaseWindow.slice(-20);
-    addTx("power_item_purchase", -itemPrice, { item: item.name, duration: "21h" });
-    saveState();
-    render();
-    return true;
-  }
-
-  async function consumeInstantDeliveryCharge() {
-    const boostId = "instant_delivery_token";
-    const local = state.activeBoosts?.[boostId];
-    if (!local) return false;
-    const charges = Math.max(0, Math.floor(Number(local?.meta?.charges || 0)));
-    if (charges <= 0) return false;
-
-    if (firebaseReady && currentUid) {
-      const ref = activeBoostsDocRef(currentUid);
-      await firebaseApi.runTransaction(db, async (tx) => {
-        const snap = await tx.get(ref);
-        const boosts = { ...(snap.data()?.boosts || {}) };
-        const entry = boosts[boostId];
-        const nextCharges = Math.max(0, Math.floor(Number(entry?.meta?.charges || 0)) - 1);
-        if (!entry) return;
-        entry.meta = { ...(entry.meta || {}), charges: nextCharges };
-        boosts[boostId] = entry;
-        tx.set(ref, { boosts, updatedAt: firebaseApi.serverTimestamp() }, { merge: true });
-      });
-      const fresh = await firebaseApi.getDoc(ref);
-      if (fresh.exists()) state.activeBoosts = normalizeBoostMap(fresh.data()?.boosts || {});
-    } else {
-      local.meta = { ...(local.meta || {}), charges: Math.max(0, charges - 1) };
-    }
-    saveState();
-    return true;
-  }
-
   async function placeSingleItemOrder(itemId, preferredSlotId = "") {
     if (purchaseLock) return;
     purchaseLock = true;
@@ -3799,21 +3380,8 @@
       const item = itemById(itemId);
       if (!item) return;
       const price = getItemPrice(item);
-
-      if (item.category === "power") {
-        await applyPowerBoostPurchase(item);
-        toast(`Activated ${item.name} for 21 hours.`);
-        return;
-      }
-
       if (hasServerSession()) {
         try {
-          const modsForDelivery = getModifiers(Date.now());
-          if ((modsForDelivery.instantDeliveryCharges || 0) > 0) {
-            await consumeInstantDeliveryCharge();
-            toast("Instant Delivery Token charge used.");
-          }
-          await flushServerMirrorSave();
           const itemDef = itemById(itemId);
           if (!itemDef) return;
 
@@ -3839,11 +3407,6 @@
       if (state.bankBalance < price) {
         toast("Not enough money for this item.");
         return;
-      }
-      const modsForDelivery = getModifiers(Date.now());
-      if ((modsForDelivery.instantDeliveryCharges || 0) > 0) {
-        await consumeInstantDeliveryCharge();
-        toast("Instant Delivery Token charge used.");
       }
       state.bankBalance -= price;
       const order = createLocalOrder(item, price);
@@ -4104,28 +3667,6 @@
   }
 
   function renderSpend(now) {
-    removeExpiredBoosts(now);
-    const activeBoostCount = Object.keys(state.activeBoosts).length;
-    dom.boostStatus.textContent = activeBoostCount ? `Active boosts: ${activeBoostCount}` : "No active boosts.";
-
-    dom.boostShop.innerHTML = "";
-    BOOST_SHOP.forEach((boost) => {
-      const cost = boostCost(boost);
-      const row = document.createElement("div");
-      row.className = "item-row";
-      row.innerHTML = `
-        <div class="row-head"><strong>${boost.name}</strong><span>${fmtMoney(cost)}</span></div>
-        <div class="row-meta">${boost.type} for ${fmtDur(boost.durationMs)}</div>
-      `;
-      const btn = document.createElement("button");
-      btn.className = "btn";
-      btn.textContent = "Buy & Use";
-      btn.disabled = state.bankBalance < cost;
-      btn.onclick = () => buyBoost(boost.id);
-      row.appendChild(btn);
-      dom.boostShop.appendChild(row);
-    });
-
     dom.skillPointText.textContent = `Skill Points: ${state.skillPoints}`;
     dom.trainingCostText.textContent = `Training Cost: ${fmtMoney(getTrainingCost())}`;
     dom.buyTrainingBtn.disabled = state.bankBalance < getTrainingCost();
@@ -4258,45 +3799,35 @@
     dom.storeList.innerHTML = "";
     const now = Date.now();
     dom.shopLastUpdated.textContent = `Last updated: ${fmtTs(now)}`;
-    const groups = [
-      { key: "standard", title: "Standard Items", items: ITEM_CATALOG.filter((i) => i.category !== "power") },
-      { key: "power", title: "Power Items", items: ITEM_CATALOG.filter((i) => i.category === "power") }
-    ];
-
-    groups.forEach((group) => {
-      const title = document.createElement("h3");
-      title.textContent = group.title;
-      dom.storeList.appendChild(title);
-
-      group.items.forEach((item) => {
-        const price = getItemPrice(item);
-        const ownedQty = Math.max(0, Math.floor(Number(state.inventory?.[item.id]?.qty || 0)));
-        const row = document.createElement("div");
-        row.className = "item-row";
-        const rarity = item.rarity ? ` | ${item.rarity}` : "";
-        const duration = item.category === "power" ? " | Duration 21 hours" : "";
-        row.innerHTML = `
-          <div class="row-head"><strong>${item.icon || "📦"} ${item.name}</strong><span>${fmtMoney(price)}</span></div>
-          <div class="row-meta">${item.description}${rarity}${duration}</div>
-          <div class="row-meta">Owned: ${ownedQty}</div>
-        `;
-        const btn = document.createElement("button");
-        btn.className = "btn";
-        btn.textContent = "Buy";
-        btn.disabled = purchaseLock || state.bankBalance < Number(price || 0) || !canBuyPowerItem(item, now);
-        btn.onclick = () => placeSingleItemOrder(item.id);
-        row.appendChild(btn);
-        dom.storeList.appendChild(row);
-      });
+    ITEM_CATALOG.filter((item) => item.category !== "power").forEach((item) => {
+      const price = getItemPrice(item);
+      const ownedQty = Math.max(0, Math.floor(Number(state.inventory?.[item.id]?.qty || 0)));
+      const row = document.createElement("div");
+      row.className = "item-row";
+      const rarity = item.rarity ? ` | ${item.rarity}` : "";
+      row.innerHTML = `
+        <div class="row-head"><strong>${item.icon || "📦"} ${item.name}</strong><span>${fmtMoney(price)}</span></div>
+        <div class="row-meta">${item.description}${rarity}</div>
+        <div class="row-meta">Owned: ${ownedQty}</div>
+      `;
+      const btn = document.createElement("button");
+      btn.className = "btn";
+      btn.textContent = "Buy";
+      btn.disabled = purchaseLock || state.bankBalance < Number(price || 0);
+      btn.onclick = () => placeSingleItemOrder(item.id);
+      row.appendChild(btn);
+      dom.storeList.appendChild(row);
     });
   }
 
   function renderInventory(now) {
-    removeExpiredBoosts(now);
-
     dom.inventoryList.innerHTML = "";
     const inventoryEntries = Object.entries(state.inventory)
-      .filter(([, v]) => (v.qty || 0) > 0)
+      .filter(([itemId, v]) => {
+        if ((v.qty || 0) <= 0) return false;
+        const item = itemById(itemId);
+        return !item || item.category !== "power";
+      })
       .sort((a, b) => a[0].localeCompare(b[0]));
 
     if (!inventoryEntries.length) {
@@ -4313,45 +3844,13 @@
         `;
         const btn = document.createElement("button");
         btn.className = "btn secondary";
-        if (item.category === "power") {
-          btn.textContent = "Auto Active";
-          btn.disabled = true;
-        } else {
-          btn.textContent = "Use";
-          btn.disabled = slot.qty <= 0;
-          btn.onclick = () => useInventoryItem(itemId);
-        }
+        btn.textContent = "Use";
+        btn.disabled = slot.qty <= 0;
+        btn.onclick = () => useInventoryItem(itemId);
         row.appendChild(btn);
         dom.inventoryList.appendChild(row);
       }
     }
-
-    dom.activeBoostList.innerHTML = "";
-    const boosts = Object.entries(state.activeBoosts);
-    if (!boosts.length) {
-      dom.activeBoostList.innerHTML = "<p class='hint'>No active boosts.</p>";
-    } else {
-      boosts.forEach(([boostId, boost]) => {
-        const row = document.createElement("div");
-        row.className = "item-row";
-        const endMs = stampMs(boost.endsAt) || now;
-        const startMs = stampMs(boost.startedAt) || Math.max(0, endMs - POWER_DURATION_MS);
-        const remain = Math.max(0, endMs - now);
-        const total = Math.max(1000, endMs - startMs);
-        const pct = Math.max(0, Math.min(100, Math.round((remain / total) * 100)));
-        const stacks = Math.max(1, Math.floor(Number(boost.stacks || 1)));
-        const uses = boost.remainingUses !== undefined ? ` | uses left ${boost.remainingUses}` : "";
-        row.innerHTML = `
-          <div class="row-head"><strong>${boost.name || boost.itemId}</strong><span>${fmtDur(remain)}</span></div>
-          <div class="row-meta">${boost.type}${boost.value ? ` ${Math.round(boost.value * 100)}%` : ""} | stacks ${stacks}${uses}</div>
-          <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
-        `;
-        dom.activeBoostList.appendChild(row);
-      });
-    }
-
-    const mods = getModifiers(now);
-    dom.effectiveModsText.textContent = `Effective: payout x${mods.payoutMult.toFixed(2)}, passive x${mods.passiveIncomeMultiplier.toFixed(2)}, duration x${mods.durationMult.toFixed(2)}, shop x${(mods.shopDiscountFactor || 1).toFixed(2)}`;
   }
 
   function renderOrders(now) {
@@ -4538,9 +4037,6 @@
       if (removeExpiredBoosts(now)) {
         shouldSave = true;
       }
-      if (firebaseReady && currentUid) {
-        cleanupExpiredCloudBoosts(now).catch(() => {});
-      }
     }
     if (shouldSave) {
       queueBackgroundSave("tick30s");
@@ -4630,9 +4126,6 @@
 
     opportunityCheck();
     removeExpiredBoosts(now);
-    if (firebaseReady && currentUid) {
-      cleanupExpiredCloudBoosts(now).catch(() => {});
-    }
     processPassiveIncome();
     if (hasServerSession()) {
       refreshRotatingShop(true);
