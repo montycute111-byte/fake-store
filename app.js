@@ -337,6 +337,7 @@
   let saveTimer = null;
   let saveInFlight = false;
   let cloudDirty = false;
+  let authActionInFlight = false;
   const CLOUD_SAVE_TIMEOUT_MS = 8000;
 
   let purchaseLock = false;
@@ -446,6 +447,13 @@
     else dom.saveStatus.textContent = `Save status: Save failed${suffix}`;
   }
 
+  function setAuthBusy(isBusy) {
+    authActionInFlight = Boolean(isBusy);
+    if (dom.loginBtn) dom.loginBtn.disabled = authActionInFlight;
+    if (dom.signupBtn) dom.signupBtn.disabled = authActionInFlight;
+    if (dom.guestBtn) dom.guestBtn.disabled = authActionInFlight;
+  }
+
   function hasServerSession() {
     return Boolean(serverSession.username && serverSession.password);
   }
@@ -472,6 +480,131 @@
     if (!resp.ok) {
       const err = new Error(data?.error || `Request failed (${resp.status})`);
       err.status = resp.status;
+      throw err;
+    }
+    return data;
+  }
+
+  function encodeFirestoreValue(value) {
+    if (value === null || value === undefined) return { nullValue: null };
+    if (Array.isArray(value)) {
+      return { arrayValue: { values: value.map((item) => encodeFirestoreValue(item)) } };
+    }
+    const type = typeof value;
+    if (type === "string") return { stringValue: value };
+    if (type === "boolean") return { booleanValue: value };
+    if (type === "number") {
+      if (!Number.isFinite(value)) return { nullValue: null };
+      if (Number.isInteger(value)) return { integerValue: String(value) };
+      return { doubleValue: value };
+    }
+    if (type === "object") {
+      const fields = {};
+      for (const [key, entry] of Object.entries(value)) {
+        fields[key] = encodeFirestoreValue(entry);
+      }
+      return { mapValue: { fields } };
+    }
+    return { stringValue: String(value) };
+  }
+
+  function decodeFirestoreValue(value) {
+    if (!value || typeof value !== "object") return null;
+    if ("nullValue" in value) return null;
+    if ("stringValue" in value) return value.stringValue;
+    if ("booleanValue" in value) return Boolean(value.booleanValue);
+    if ("integerValue" in value) return Number(value.integerValue);
+    if ("doubleValue" in value) return Number(value.doubleValue);
+    if ("timestampValue" in value) return Date.parse(value.timestampValue);
+    if ("arrayValue" in value) {
+      const items = Array.isArray(value.arrayValue?.values) ? value.arrayValue.values : [];
+      return items.map((item) => decodeFirestoreValue(item));
+    }
+    if ("mapValue" in value) {
+      const fields = value.mapValue?.fields || {};
+      const out = {};
+      for (const [key, entry] of Object.entries(fields)) {
+        out[key] = decodeFirestoreValue(entry);
+      }
+      return out;
+    }
+    return null;
+  }
+
+  async function getFirestoreRestHeaders() {
+    if (!firebaseReady || !auth?.currentUser) {
+      const err = new Error("unauthenticated");
+      err.code = "unauthenticated";
+      throw err;
+    }
+    const token = await auth.currentUser.getIdToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    };
+  }
+
+  function getFirestoreDocumentUrl(path) {
+    const projectId = window.FIREBASE_CONFIG?.projectId;
+    if (!projectId) {
+      const err = new Error("missing-project-id");
+      err.code = "missing-project-id";
+      throw err;
+    }
+    return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${path}`;
+  }
+
+  async function restLoadUserDocument(uid) {
+    const headers = await getFirestoreRestHeaders();
+    const resp = await fetch(getFirestoreDocumentUrl(`users/${uid}`), {
+      method: "GET",
+      headers
+    });
+    if (resp.status === 404) return null;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const err = new Error(data?.error?.message || `rest-load-failed-${resp.status}`);
+      err.code = data?.error?.status || `rest-load-${resp.status}`;
+      throw err;
+    }
+    return data;
+  }
+
+  async function restSaveUserDocument(uid, gameState) {
+    const headers = await getFirestoreRestHeaders();
+    const username = usernameFromUser(auth.currentUser);
+    const body = {
+      fields: {
+        email: encodeFirestoreValue(auth.currentUser?.email || ""),
+        username: encodeFirestoreValue(username),
+        usernameLower: encodeFirestoreValue(username),
+        displayName: encodeFirestoreValue(username),
+        updatedAt: encodeFirestoreValue(Date.now()),
+        lastActiveAt: encodeFirestoreValue(Date.now()),
+        balance: encodeFirestoreValue(Number(gameState.bankBalance || 0)),
+        gameState: encodeFirestoreValue(gameState)
+      }
+    };
+    const params = new URLSearchParams();
+    [
+      "email",
+      "username",
+      "usernameLower",
+      "displayName",
+      "updatedAt",
+      "lastActiveAt",
+      "balance",
+      "gameState"
+    ].forEach((fieldPath) => params.append("updateMask.fieldPaths", fieldPath));
+    const resp = await fetch(`${getFirestoreDocumentUrl(`users/${uid}`)}?${params.toString()}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const err = new Error(data?.error?.message || `rest-save-failed-${resp.status}`);
+      err.code = data?.error?.status || `rest-save-${resp.status}`;
       throw err;
     }
     return data;
@@ -688,55 +821,77 @@
   }
 
   async function loadUserGameState(uid) {
+    if (firebaseReady && auth?.currentUser) {
+      try {
+        const restDoc = await withTimeout(
+          restLoadUserDocument(uid),
+          4000,
+          "rest-load-timeout"
+        );
+        if (restDoc?.fields) {
+          const gameState = decodeFirestoreValue(restDoc.fields.gameState);
+          const loaded = migrateState(gameState || {});
+          const balance = decodeFirestoreValue(restDoc.fields.balance);
+          if (Number.isFinite(balance)) loaded.bankBalance = Number(balance);
+          replaceState(loaded);
+          balanceDisplay = state.bankBalance;
+          saveLocalState();
+          setSaveStatus("saved", "cloud");
+          if (gameStarted) render();
+          return;
+        }
+      } catch {
+        // Fall through to SDK load if the REST path fails.
+      }
+    }
+
     if (!firebaseReady || !uid) return;
     const userRef = firebaseApi.doc(db, "users", uid);
-    const snap = await firebaseApi.getDoc(userRef);
+    const snap = await withTimeout(
+      firebaseApi.getDoc(userRef),
+      4000,
+      "sdk-load-timeout"
+    );
     if (!snap.exists()) {
       const initial = getDefaultState();
       replaceState(initial);
-      await firebaseApi.setDoc(userRef, {
-        email: auth.currentUser?.email || "",
-        username: usernameFromUser(auth.currentUser),
-        usernameLower: usernameFromUser(auth.currentUser),
-        displayName: usernameFromUser(auth.currentUser),
-        createdAt: firebaseApi.serverTimestamp(),
-        updatedAt: firebaseApi.serverTimestamp(),
-        balance: Number(initial.bankBalance || 0),
-        gameState: initial
-      }, { merge: true });
-      await firebaseApi.setDoc(inventoryDocRef(uid), { items: initial.inventory || {} }, { merge: true });
-      await firebaseApi.setDoc(activeBoostsDocRef(uid), { boosts: {}, updatedAt: firebaseApi.serverTimestamp() }, { merge: true });
+      try {
+        await withTimeout(
+          firebaseApi.setDoc(userRef, {
+            email: auth.currentUser?.email || "",
+            username: usernameFromUser(auth.currentUser),
+            usernameLower: usernameFromUser(auth.currentUser),
+            displayName: usernameFromUser(auth.currentUser),
+            createdAt: firebaseApi.serverTimestamp(),
+            updatedAt: firebaseApi.serverTimestamp(),
+            balance: Number(initial.bankBalance || 0),
+            gameState: initial
+          }, { merge: true }),
+          4000,
+          "sdk-create-timeout"
+        );
+      } catch {
+        // The account can still proceed using the default local state.
+      }
+      balanceDisplay = state.bankBalance;
+      saveLocalState();
       setSaveStatus("saved");
+      if (gameStarted) render();
       return;
     }
     const data = snap.data() || {};
     const loaded = migrateState(data.gameState || {});
     if (Number.isFinite(data.balance)) loaded.bankBalance = Number(data.balance);
-    try {
-      const invSnap = await firebaseApi.getDoc(inventoryDocRef(uid));
-      if (invSnap.exists()) {
-        loaded.inventory = invSnap.data()?.items && typeof invSnap.data().items === "object" ? invSnap.data().items : loaded.inventory;
-      }
-    } catch (err) {
-      console.warn("[cloud-load] Inventory read failed; continuing with gameState inventory.", err?.code || err?.message || err);
-    }
-    try {
-      const boostsSnap = await firebaseApi.getDoc(activeBoostsDocRef(uid));
-      if (boostsSnap.exists()) {
-        loaded.activeBoosts = normalizeBoostMap(boostsSnap.data()?.boosts || {});
-      }
-    } catch (err) {
-      console.warn("[cloud-load] Active boosts read failed; continuing with gameState boosts.", err?.code || err?.message || err);
-    }
     replaceState(loaded);
+    balanceDisplay = state.bankBalance;
     saveLocalState();
     setSaveStatus("saved");
+    if (gameStarted) render();
   }
 
   async function saveUserGameState(uid, gameState) {
     if (!firebaseReady || !uid) return;
     const userRef = firebaseApi.doc(db, "users", uid);
-    const warnings = [];
     await firebaseApi.setDoc(userRef, {
       email: auth.currentUser?.email || "",
       username: usernameFromUser(auth.currentUser),
@@ -747,39 +902,6 @@
       balance: Number(gameState.bankBalance || 0),
       gameState
     }, { merge: true });
-    try {
-      await firebaseApi.setDoc(inventoryDocRef(uid), { items: gameState.inventory || {} }, { merge: true });
-    } catch (err) {
-      warnings.push("inventory");
-      console.warn("[cloud-save] Inventory sync failed; core save still succeeded.", err?.code || err?.message || err);
-    }
-    const boostPayload = {};
-    for (const [boostId, boost] of Object.entries(gameState.activeBoosts || {})) {
-      const startedMs = stampMs(boost.startedAt) || Date.now();
-      const endsMs = stampMs(boost.endsAt) || (startedMs + POWER_DURATION_MS);
-      boostPayload[boostId] = {
-        id: boost.id || boostId,
-        itemId: boost.itemId || boostId,
-        name: boost.name || POWER_ITEM_BY_ID[boost.itemId || boostId]?.name || boostId,
-        type: boost.type || "custom",
-        value: Number(boost.value || 0),
-        stacks: Math.max(1, Math.floor(Number(boost.stacks || 1))),
-        meta: boost.meta && typeof boost.meta === "object" ? boost.meta : {},
-        remainingUses: boost.remainingUses !== undefined ? Math.max(0, Math.floor(Number(boost.remainingUses || 0))) : null,
-        purchasedAt: firebaseApi.Timestamp.fromMillis(startedMs),
-        expiresAt: firebaseApi.Timestamp.fromMillis(endsMs)
-      };
-    }
-    try {
-      await firebaseApi.setDoc(activeBoostsDocRef(uid), {
-        boosts: boostPayload,
-        updatedAt: firebaseApi.serverTimestamp()
-      }, { merge: true });
-    } catch (err) {
-      warnings.push("boosts");
-      console.warn("[cloud-save] Active boosts sync failed; core save still succeeded.", err?.code || err?.message || err);
-    }
-    return warnings;
   }
 
   async function flushCloudSave() {
@@ -788,6 +910,29 @@
       setSaveStatus("saved", "local");
       return;
     }
+
+    if (firebaseReady && currentUid && auth?.currentUser) {
+      setSaveStatus("saving");
+      try {
+        await withTimeout(
+          restSaveUserDocument(currentUid, exportGameStateForSave()),
+          5000,
+          "rest-save-timeout"
+        );
+        cloudDirty = false;
+        saveLocalState();
+        setSaveStatus("saved", "cloud");
+        return;
+      } catch (err) {
+        // Fall through to SDK save if the REST path fails.
+        if (!firebaseReady) {
+          cloudDirty = true;
+          setSaveStatus("error", err?.code || err?.message || "rest-save-failed");
+          return;
+        }
+      }
+    }
+
     if (!firebaseReady || !currentUid || !cloudDirty || saveInFlight) return;
     saveInFlight = true;
     cloudDirty = false;
@@ -897,12 +1042,15 @@
 
   function bindAuthEvents() {
     dom.loginBtn.onclick = async () => {
+      if (authActionInFlight) return;
+      setAuthBusy(true);
       setAuthError("");
       const username = String(dom.usernameInput.value || "").trim();
       const email = usernameToEmail(username);
       const password = dom.passwordInput.value;
       if (!username || !password) {
         setAuthError("Enter username and password.");
+        setAuthBusy(false);
         return;
       }
 
@@ -912,6 +1060,8 @@
           setAuthError("");
         } catch (err) {
           setAuthError(err?.message || "Local login failed.");
+        } finally {
+          setAuthBusy(false);
         }
         return;
       }
@@ -919,18 +1069,27 @@
       try {
         await firebaseApi.signInWithEmailAndPassword(auth, email, password);
         setServerSession(username, password);
+        if (auth?.currentUser) {
+          await handleAuthState(auth.currentUser);
+        } else {
+          setAuthBusy(false);
+        }
       } catch (err) {
         setAuthError(formatAuthError(err));
+        setAuthBusy(false);
       }
     };
 
     dom.signupBtn.onclick = async () => {
+      if (authActionInFlight) return;
+      setAuthBusy(true);
       setAuthError("");
       const username = String(dom.usernameInput.value || "").trim();
       const email = usernameToEmail(username);
       const password = dom.passwordInput.value;
       if (!username || !password) {
         setAuthError("Enter username and password.");
+        setAuthBusy(false);
         return;
       }
 
@@ -940,6 +1099,8 @@
           setAuthError("");
         } catch (err) {
           setAuthError(err?.message || "Local sign up failed.");
+        } finally {
+          setAuthBusy(false);
         }
         return;
       }
@@ -947,16 +1108,28 @@
       try {
         await firebaseApi.createUserWithEmailAndPassword(auth, email, password);
         setServerSession(username, password);
+        if (auth?.currentUser) {
+          await handleAuthState(auth.currentUser);
+        } else {
+          setAuthBusy(false);
+        }
       } catch (err) {
         setAuthError(formatAuthError(err));
+        setAuthBusy(false);
       }
     };
 
     dom.guestBtn.onclick = async () => {
+      if (authActionInFlight) return;
+      setAuthBusy(true);
       clearServerSession();
       localStorage.setItem(LOCAL_USER_KEY, "guest");
       localAuthMode = true;
-      await handleAuthState({ uid: "local_guest", email: "guest@local.test" });
+      try {
+        await handleAuthState({ uid: "local_guest", email: "guest@local.test" });
+      } finally {
+        setAuthBusy(false);
+      }
     };
 
     dom.logoutBtn.onclick = async () => {
@@ -1071,6 +1244,7 @@
 
   async function handleAuthState(user) {
     if (!user) {
+      setAuthBusy(false);
       clearSocialListeners();
       resetSocialState();
       currentUid = null;
@@ -1079,12 +1253,13 @@
       return;
     }
     currentUid = user.uid;
-    try {
-      if (!localAuthMode) await loadUserGameState(user.uid);
-      else replaceState(loadLocalState());
+    if (localAuthMode) {
+      replaceState(loadLocalState());
       balanceDisplay = state.bankBalance;
-    } catch (err) {
-      console.error("State load failed during auth:", err);
+    } else {
+      replaceState(loadLocalState());
+      balanceDisplay = state.bankBalance;
+      setSaveStatus("offline", "loading-cloud");
     }
 
     try {
@@ -1094,19 +1269,27 @@
       if (!gameStarted) startGame();
       else render();
       setAuthError("");
+      setAuthBusy(false);
     } catch (err) {
       console.error("Post-login startup failed:", err);
       setAuthError(err?.message || "Login succeeded but the app failed to load.");
+      setAuthBusy(false);
       showAuthScreen();
       return;
+    }
+
+    if (!localAuthMode) {
+      loadUserGameState(user.uid).catch((err) => {
+        console.warn("Cloud state load skipped:", err?.code || err?.message || err);
+        setSaveStatus(navigator.onLine ? "offline" : "offline", err?.code || err?.message || "cloud-load-failed");
+      });
     }
 
     if (!localAuthMode && firebaseReady) {
       try {
         await ensureUserProfileRecord(user);
       } catch (err) {
-        console.error("Profile sync failed:", err);
-        toast(`Profile sync failed: ${err?.message || "unknown error"}`);
+        console.warn("Profile sync skipped:", err?.code || err?.message || err);
       }
     }
 
@@ -1239,41 +1422,14 @@
     const uid = user.uid;
     const usernameLower = usernameFromUser(user);
     const userRef = userDocRef(uid);
-    const usernameRef = fsDoc("usernames", usernameLower);
-
-    await firebaseApi.runTransaction(db, async (tx) => {
-      const userSnap = await tx.get(userRef);
-      const existing = userSnap.exists() ? userSnap.data() : {};
-      const oldUsername = sanitizeUsername(existing?.usernameLower || existing?.username || "");
-      const usernameSnap = await tx.get(usernameRef);
-
-      if (usernameSnap.exists() && String(usernameSnap.data()?.uid || "") !== uid) {
-        throw new Error("Username is already taken.");
-      }
-
-      const nextUserDoc = {
-        email: user.email || existing?.email || "",
-        username: usernameLower,
-        usernameLower,
-        displayName: existing?.displayName || usernameLower,
-        createdAt: existing?.createdAt || firebaseApi.serverTimestamp(),
-        updatedAt: firebaseApi.serverTimestamp(),
-        lastActiveAt: firebaseApi.serverTimestamp(),
-        balance: Number(existing?.balance ?? state.bankBalance ?? 0),
-        blocked: existing?.blocked || {}
-      };
-
-      if (existing?.gameState && typeof existing.gameState === "object") {
-        nextUserDoc.gameState = existing.gameState;
-      }
-
-      tx.set(userRef, nextUserDoc, { merge: true });
-
-      tx.set(usernameRef, { uid, createdAt: firebaseApi.serverTimestamp() }, { merge: true });
-      if (oldUsername && oldUsername !== usernameLower) {
-        tx.delete(fsDoc("usernames", oldUsername));
-      }
-    });
+    await firebaseApi.setDoc(userRef, {
+      email: user.email || "",
+      username: usernameLower,
+      usernameLower,
+      displayName: usernameLower,
+      updatedAt: firebaseApi.serverTimestamp(),
+      lastActiveAt: firebaseApi.serverTimestamp()
+    }, { merge: true });
   }
 
   async function refreshProfilesForUids(uids) {
@@ -1922,13 +2078,16 @@
   }
 
   function removeExpiredBoosts(now = Date.now()) {
+    let changed = false;
     for (const [boostId, boost] of Object.entries(state.activeBoosts)) {
       const doneByTime = stampMs(boost.endsAt) && now >= stampMs(boost.endsAt);
       const doneByUses = boost.type === "payoutBonusNextN" && (boost.remainingUses || 0) <= 0;
       if (doneByTime || doneByUses) {
         delete state.activeBoosts[boostId];
+        changed = true;
       }
     }
+    return changed;
   }
 
   function getActiveBoostEffects(now = Date.now()) {
@@ -2237,17 +2396,21 @@
 
   function opportunityCheck() {
     const now = Date.now();
+    let changed = false;
 
     if (state.activeOpportunity && now >= state.activeOpportunity.offerExpiresAt) {
       state.activeOpportunity = null;
+      changed = true;
     }
 
     if (!state.nextOpportunityCheckAt) {
       state.nextOpportunityCheckAt = now + randInt(5 * 60 * 1000, 10 * 60 * 1000);
+      changed = true;
     }
 
     if (!state.activeOpportunity && now >= state.nextOpportunityCheckAt) {
       state.nextOpportunityCheckAt = now + randInt(5 * 60 * 1000, 10 * 60 * 1000);
+      changed = true;
       if (Math.random() < 0.20) {
         state.activeOpportunity = {
           id: uniqueId("opp"),
@@ -2256,8 +2419,10 @@
           basePay: 80,
           offerExpiresAt: now + 30 * 1000
         };
+        changed = true;
       }
     }
+    return changed;
   }
 
   function acceptOpportunity() {
@@ -2603,6 +2768,7 @@
   }
 
   function updateOrderStatuses(now = Date.now()) {
+    let changed = false;
     for (const order of Object.values(state.orders)) {
       const next = deriveOrderStatus(order, now);
       if (order.status !== next) {
@@ -2610,8 +2776,10 @@
         order.timeline.push({ status: next, at: now });
         order.status = next;
         order.lastStatusUpdateAt = now;
+        changed = true;
       }
     }
+    return changed;
   }
 
   async function refreshRotatingShop(force = false) {
@@ -3452,7 +3620,6 @@
   }
 
   function renderOrders(now) {
-    updateOrderStatuses(now);
     const orders = hasServerSession() && serverOrders.length
       ? [...serverOrders].sort((a, b) => b.createdAt - a.createdAt)
       : Object.values(state.orders).sort((a, b) => b.createdAt - a.createdAt);
@@ -3602,6 +3769,9 @@
       state.streakWindowUntil = null;
       shouldSave = true;
     }
+    if (updateOrderStatuses(now)) {
+      shouldSave = true;
+    }
     if (processPassiveIncome()) {
       shouldSave = true;
     }
@@ -3612,17 +3782,24 @@
   }
 
   function tick30s() {
-    opportunityCheck();
+    let shouldSave = false;
+    if (opportunityCheck()) {
+      shouldSave = true;
+    }
     if (hasServerSession()) refreshServerOrders();
     const now = Date.now();
     if (now - lastBoostCleanupAt >= 5 * 60 * 1000) {
       lastBoostCleanupAt = now;
-      removeExpiredBoosts(now);
+      if (removeExpiredBoosts(now)) {
+        shouldSave = true;
+      }
       if (firebaseReady && currentUid) {
         cleanupExpiredCloudBoosts(now).catch(() => {});
       }
     }
-    saveState();
+    if (shouldSave) {
+      saveState();
+    }
     render();
   }
 
