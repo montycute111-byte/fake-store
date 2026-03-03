@@ -8,12 +8,26 @@ import {
   signOut
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
-  getFirestore,
+  initializeFirestore,
   doc,
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  addDoc,
+  deleteDoc,
+  writeBatch,
+  runTransaction,
+  increment,
+  onSnapshot,
+  getDocs,
+  documentId,
   getDoc,
   setDoc,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  Timestamp
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 export {
@@ -23,10 +37,24 @@ export {
   sendPasswordResetEmail,
   signOut,
   doc,
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  addDoc,
+  deleteDoc,
+  writeBatch,
+  runTransaction,
+  increment,
+  onSnapshot,
+  getDocs,
+  documentId,
   getDoc,
   setDoc,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  Timestamp
 };
 
 export function initFirebase() {
@@ -53,7 +81,10 @@ export function initFirebase() {
 
   const app = initializeApp(cfg);
   const auth = getAuth(app);
-  const db = getFirestore(app);
+  const db = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+    useFetchStreams: false
+  });
 
   return { ok: true, app, auth, db };
 }
