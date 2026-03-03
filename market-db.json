@@ -1,6 +1,218 @@
 {
   "listings": [],
   "sessions": [],
-  "userProgress": {},
-  "generatedImages": {}
+  "userProgress": {
+    "tester": {
+      "passwordHash": "9b8769a4a742959a2d0298c36fb70623f2dfacda8436237df08d8dfd5b37374c",
+      "progress": {
+        "bankBalance": 4880,
+        "txLog": [
+          {
+            "ts": 1772172090555,
+            "type": "shop_order",
+            "amount": -120,
+            "meta": {
+              "itemId": "energy_drink",
+              "rarity": "common",
+              "slotId": "normal_1"
+            }
+          }
+        ],
+        "inventory": {
+          "energy_drink": {
+            "qty": 1
+          }
+        },
+        "schemaVersion": 2
+      },
+      "updatedAt": "2026-02-27T07:03:28.321Z"
+    },
+    "tester2": {
+      "passwordHash": "9b8769a4a742959a2d0298c36fb70623f2dfacda8436237df08d8dfd5b37374c",
+      "progress": {
+        "bankBalance": 880,
+        "txLog": [
+          {
+            "ts": 1772175808307,
+            "type": "shop_order",
+            "amount": -120,
+            "meta": {
+              "itemId": "energy_drink",
+              "rarity": "common",
+              "slotId": "direct_energy_drink"
+            }
+          }
+        ],
+        "inventory": {},
+        "schemaVersion": 2
+      },
+      "updatedAt": "2026-02-27T07:03:28.308Z"
+    }
+  },
+  "generatedImages": {},
+  "rotatingShop": {},
+  "orders": {
+    "ord_11b02a41f1c945fb": {
+      "orderId": "ord_11b02a41f1c945fb",
+      "userId": "tester",
+      "trackingId": "MS6101355006",
+      "items": [
+        {
+          "itemId": "energy_drink",
+          "name": "Energy Drink",
+          "qty": 1,
+          "price": 120,
+          "rarity": "common"
+        }
+      ],
+      "subtotal": 120,
+      "shippingFee": 0,
+      "total": 120,
+      "status": "Delivered",
+      "createdAt": 1772172090555,
+      "etaAt": 1772172210555,
+      "shippedAt": 1772172150555,
+      "outForDeliveryAt": 1772172210555,
+      "deliveredAt": 1772175808321,
+      "inventoryGranted": true,
+      "timeline": [
+        {
+          "status": "Processing",
+          "at": 1772172090555
+        },
+        {
+          "status": "Delivered",
+          "at": 1772175808321
+        }
+      ]
+    },
+    "ord_c8fff74480da4a44": {
+      "orderId": "ord_c8fff74480da4a44",
+      "userId": "tester2",
+      "trackingId": "MS4977011386",
+      "items": [
+        {
+          "itemId": "energy_drink",
+          "name": "Energy Drink",
+          "qty": 1,
+          "price": 120,
+          "rarity": "common"
+        }
+      ],
+      "subtotal": 120,
+      "shippingFee": 0,
+      "total": 120,
+      "status": "Processing",
+      "createdAt": 1772175808307,
+      "etaAt": 1772175928307,
+      "shippedAt": 1772175868307,
+      "outForDeliveryAt": 1772175928307,
+      "deliveredAt": null,
+      "inventoryGranted": false,
+      "timeline": [
+        {
+          "status": "Processing",
+          "at": 1772175808307
+        }
+      ]
+    }
+  },
+  "userOrders": {
+    "tester": [
+      "ord_11b02a41f1c945fb"
+    ],
+    "tester2": [
+      "ord_c8fff74480da4a44"
+    ]
+  },
+  "dailyShopSchedules": {
+    "2026-02-26": {
+      "dateKey": "2026-02-26",
+      "generatedAt": 1772164497795,
+      "specialSpawns": [
+        1772122132105,
+        1772124268621,
+        1772149259748
+      ]
+    },
+    "2026-02-27": {
+      "dateKey": "2026-02-27",
+      "generatedAt": 1772172090463,
+      "specialSpawns": [
+        1772198958567,
+        1772211720479,
+        1772212401449,
+        1772234994882,
+        1772244204992,
+        1772252563648
+      ]
+    }
+  },
+  "shopState": {
+    "dateKey": "2026-02-27",
+    "lastUpdatedAt": 1772172090555,
+    "lastProcessedSpawnAt": 1772171999999,
+    "slots": [
+      {
+        "slotId": "normal_1",
+        "slotType": "normal",
+        "itemId": "lucky_coin",
+        "name": "Lucky Coin",
+        "rarity": "epic",
+        "price": 493,
+        "createdAt": 1772172090555,
+        "expiresAt": 1772173290555
+      },
+      {
+        "slotId": "normal_2",
+        "slotType": "normal",
+        "itemId": "energy_drink",
+        "name": "Energy Drink",
+        "rarity": "common",
+        "price": 120,
+        "createdAt": 1772172090463,
+        "expiresAt": 1772258490463
+      },
+      {
+        "slotId": "normal_3",
+        "slotType": "normal",
+        "itemId": "energy_drink",
+        "name": "Energy Drink",
+        "rarity": "common",
+        "price": 120,
+        "createdAt": 1772172090463,
+        "expiresAt": 1772258490463
+      },
+      {
+        "slotId": "normal_4",
+        "slotType": "normal",
+        "itemId": "energy_drink",
+        "name": "Energy Drink",
+        "rarity": "common",
+        "price": 120,
+        "createdAt": 1772172090463,
+        "expiresAt": 1772258490463
+      },
+      {
+        "slotId": "special_1",
+        "slotType": "special",
+        "itemId": null,
+        "name": null,
+        "rarity": null,
+        "price": null,
+        "createdAt": null,
+        "expiresAt": 0
+      },
+      {
+        "slotId": "special_2",
+        "slotType": "special",
+        "itemId": null,
+        "name": null,
+        "rarity": null,
+        "price": null,
+        "createdAt": null,
+        "expiresAt": 0
+      }
+    ]
+  }
 }

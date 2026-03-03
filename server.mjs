@@ -22,6 +22,33 @@ const KNOWN_BRANDS = new Set([
   "apple", "samsung", "sony", "nintendo", "xbox", "playstation", "microsoft", "google", "amazon", "temu",
   "walmart", "target", "dell", "hp", "asus", "lenovo", "razer", "logitech", "beats", "bose", "nike", "adidas"
 ]);
+const NORMAL_SLOT_COUNT = 4;
+const SPECIAL_SLOT_COUNT = 2;
+const ORDER_TICK_MS = 15 * 1000;
+const DELIVERY_MIN_MAX_BY_RARITY_MIN = {
+  common: [1, 3],
+  uncommon: [1, 2],
+  rare: [1, 2],
+  epic: [1, 1],
+  legendary: [1, 1],
+  mythic: [1, 1]
+};
+const RARITY_CONFIG = {
+  common: { weight: 60, durationMs: 24 * 60 * 60 * 1000 },
+  uncommon: { weight: 22, durationMs: 6 * 60 * 60 * 1000 },
+  rare: { weight: 10, durationMs: 60 * 60 * 1000 },
+  epic: { weight: 6, durationMs: 20 * 60 * 1000 },
+  legendary: { weight: 1.5, durationRangeMs: [5 * 60 * 1000, 10 * 60 * 1000] },
+  mythic: { weight: 0.5, durationRangeMs: [5 * 60 * 1000, 10 * 60 * 1000] }
+};
+const SHOP_CATALOG = [
+  { id: "energy_drink", name: "Energy Drink", basePrice: 120, rarity: "common", maxStack: 25 },
+  { id: "coffee", name: "Premium Coffee", basePrice: 180, rarity: "uncommon", maxStack: 25 },
+  { id: "protein_bar", name: "Protein Bar", basePrice: 260, rarity: "rare", maxStack: 20 },
+  { id: "lucky_coin", name: "Lucky Coin", basePrice: 340, rarity: "epic", maxStack: 15 },
+  { id: "vip_crate", name: "VIP Crate", basePrice: 520, rarity: "legendary", maxStack: 10 },
+  { id: "mythic_cache", name: "Mythic Cache", basePrice: 900, rarity: "mythic", maxStack: 8 }
+];
 
 const db = await loadDb();
 const removedDemoCount = stripDemoListings(db);
@@ -49,6 +76,10 @@ setInterval(() => {
     client.res.write(": ping\n\n");
   }
 }, 20_000);
+setInterval(() => {
+  processOrderStatusUpdates().catch(() => {});
+  processRotatingShopState().catch(() => {});
+}, ORDER_TICK_MS);
 
 server.listen(PORT, () => {
   if (removedDemoCount > 0) {
@@ -161,6 +192,152 @@ async function handleApi(req, res, url) {
     };
     await persistDb();
     sendJson(res, 200, { ok: true, updatedAt: db.userProgress[username].updatedAt });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/shop") {
+    await processRotatingShopState();
+    const slots = Array.isArray(db.shopState?.slots) ? db.shopState.slots : [];
+    sendJson(res, 200, { slots, lastUpdatedAt: db.shopState?.lastUpdatedAt || Date.now() });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/shop/buy") {
+    const body = await parseJsonBody(req);
+    const username = normalizeUsername(body?.username);
+    const password = String(body?.password || "");
+    const slotId = String(body?.slotId || "").trim();
+    const itemId = String(body?.itemId || "").trim();
+    verifyUserCredentials(username, password);
+    const now = Date.now();
+    let slot = null;
+    if (itemId) {
+      const directItem = SHOP_CATALOG.find((item) => item.id === itemId);
+      if (!directItem) {
+        sendJson(res, 404, { error: "Item not found" });
+        return;
+      }
+      slot = {
+        slotId: `direct_${directItem.id}`,
+        slotType: "normal",
+        itemId: directItem.id,
+        name: directItem.name,
+        rarity: directItem.rarity || "common",
+        price: Number(directItem.basePrice || 0),
+        createdAt: now,
+        expiresAt: now + 24 * 60 * 60 * 1000
+      };
+    } else {
+      if (!slotId) {
+        sendJson(res, 400, { error: "slotId or itemId is required" });
+        return;
+      }
+      await processRotatingShopState();
+      const slots = Array.isArray(db.shopState?.slots) ? db.shopState.slots : [];
+      slot = slots.find((s) => s.slotId === slotId);
+      if (!slot) {
+        sendJson(res, 404, { error: "Slot not found" });
+        return;
+      }
+      if (slot.expiresAt <= now) {
+        sendJson(res, 409, { error: "Slot expired" });
+        return;
+      }
+      if (!slot.itemId) {
+        sendJson(res, 409, { error: "No item in this slot" });
+        return;
+      }
+    }
+
+    const progress = ensureUserProgress(username, password);
+    const money = Number(progress.bankBalance) || 0;
+    if (money < slot.price) {
+      sendJson(res, 409, { error: "Insufficient funds" });
+      return;
+    }
+    const catalogItem = SHOP_CATALOG.find((item) => item.id === slot.itemId);
+    if (!catalogItem) {
+      sendJson(res, 409, { error: "Item no longer valid" });
+      return;
+    }
+    const purchasedMeta = {
+      itemId: catalogItem.id,
+      name: slot.name || catalogItem.name,
+      rarity: slot.rarity
+    };
+
+    progress.bankBalance = Math.floor((money - slot.price) * 100) / 100;
+    if (!Array.isArray(progress.txLog)) progress.txLog = [];
+    progress.txLog.unshift({
+      ts: now,
+      type: "shop_order",
+      amount: -slot.price,
+      meta: { itemId: slot.itemId, rarity: slot.rarity, slotId: slot.slotId }
+    });
+    progress.txLog = progress.txLog.slice(0, 25);
+
+    const order = createOrderForSlot(username, slot);
+    db.orders[order.orderId] = order;
+    if (!Array.isArray(db.userOrders[username])) db.userOrders[username] = [];
+    db.userOrders[username].unshift(order.orderId);
+
+    if (!itemId) rotateSlotNow(slot, now);
+
+    db.userProgress[username] = {
+      passwordHash: sha256(password),
+      progress,
+      updatedAt: new Date().toISOString()
+    };
+    await persistDb();
+
+    sendJson(res, 200, {
+      ok: true,
+      purchasedItem: purchasedMeta,
+      bankBalance: progress.bankBalance,
+      orderId: order.orderId,
+      trackingId: order.trackingId
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/shop/admin/force-rotate") {
+    requireAdminSession(req);
+    db.shopState = null;
+    await processRotatingShopState();
+    await persistDb();
+    sendJson(res, 200, { ok: true, slots: db.shopState?.slots || [] });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/list") {
+    const body = await parseJsonBody(req);
+    const username = normalizeUsername(body?.username);
+    const password = String(body?.password || "");
+    verifyUserCredentials(username, password);
+    await processOrderStatusUpdates();
+    const ids = Array.isArray(db.userOrders[username]) ? db.userOrders[username] : [];
+    const orders = ids.map((id) => db.orders[id]).filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+    sendJson(res, 200, { orders });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/orders/track") {
+    const body = await parseJsonBody(req);
+    const username = normalizeUsername(body?.username);
+    const password = String(body?.password || "");
+    const trackingId = String(body?.trackingId || "").trim();
+    verifyUserCredentials(username, password);
+    if (!trackingId) {
+      sendJson(res, 400, { error: "trackingId is required" });
+      return;
+    }
+    await processOrderStatusUpdates();
+    const order = Object.values(db.orders).find((o) => o.userId === username && o.trackingId === trackingId);
+    if (!order) {
+      sendJson(res, 404, { error: "Order not found" });
+      return;
+    }
+    sendJson(res, 200, { order });
     return;
   }
 
@@ -573,6 +750,258 @@ function cleanupSessions() {
   db.sessions = db.sessions.filter((item) => Number(item.expiresAt) > Date.now());
 }
 
+function ensureUserProgress(username, password) {
+  const existing = db.userProgress[username]?.progress;
+  const now = new Date().toISOString();
+  const progress =
+    existing && typeof existing === "object"
+      ? existing
+      : {
+          schemaVersion: 2,
+          bankBalance: 500,
+          bankLevel: 1,
+          bankXP: 0,
+          reputation: 0,
+          inventory: {},
+          txLog: []
+        };
+  db.userProgress[username] = {
+    passwordHash: sha256(password),
+    progress,
+    updatedAt: now
+  };
+  return progress;
+}
+
+function dayBounds(date = new Date()) {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime();
+  const end = start + 24 * 60 * 60 * 1000;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return { start, end, dateKey: `${y}-${m}-${d}` };
+}
+
+function ensureDailySchedule(now = Date.now()) {
+  const bounds = dayBounds(new Date(now));
+  if (!db.dailyShopSchedules[bounds.dateKey]) {
+    const count = randInt(2, 6);
+    const specialSpawns = [];
+    for (let i = 0; i < count; i += 1) {
+      specialSpawns.push(randInt(bounds.start, bounds.end - 1));
+    }
+    specialSpawns.sort((a, b) => a - b);
+    db.dailyShopSchedules[bounds.dateKey] = {
+      dateKey: bounds.dateKey,
+      generatedAt: now,
+      specialSpawns
+    };
+  }
+  return db.dailyShopSchedules[bounds.dateKey];
+}
+
+function ensureShopState(now = Date.now()) {
+  const schedule = ensureDailySchedule(now);
+  const bounds = dayBounds(new Date(now));
+  if (!db.shopState || db.shopState.dateKey !== schedule.dateKey) {
+    db.shopState = {
+      dateKey: schedule.dateKey,
+      lastUpdatedAt: now,
+      lastProcessedSpawnAt: bounds.start - 1,
+      slots: [
+        ...Array.from({ length: NORMAL_SLOT_COUNT }).map((_, i) => createEmptySlot(`normal_${i + 1}`, "normal")),
+        ...Array.from({ length: SPECIAL_SLOT_COUNT }).map((_, i) => createEmptySlot(`special_${i + 1}`, "special"))
+      ]
+    };
+  }
+  return db.shopState;
+}
+
+function createEmptySlot(slotId, slotType) {
+  return {
+    slotId,
+    slotType,
+    itemId: null,
+    name: null,
+    rarity: null,
+    price: null,
+    createdAt: null,
+    expiresAt: 0
+  };
+}
+
+function pickRarityForSlot(slotType) {
+  const pool = slotType === "special"
+    ? [
+        { rarity: "legendary", weight: RARITY_CONFIG.legendary.weight },
+        { rarity: "mythic", weight: RARITY_CONFIG.mythic.weight }
+      ]
+    : [
+        { rarity: "common", weight: RARITY_CONFIG.common.weight },
+        { rarity: "uncommon", weight: RARITY_CONFIG.uncommon.weight },
+        { rarity: "rare", weight: RARITY_CONFIG.rare.weight },
+        { rarity: "epic", weight: RARITY_CONFIG.epic.weight }
+      ];
+  const total = pool.reduce((sum, x) => sum + x.weight, 0);
+  let roll = Math.random() * total;
+  for (const p of pool) {
+    roll -= p.weight;
+    if (roll <= 0) return p.rarity;
+  }
+  return pool[0].rarity;
+}
+
+function durationForRarity(rarity) {
+  const cfg = RARITY_CONFIG[rarity] || RARITY_CONFIG.common;
+  if (cfg.durationRangeMs) return randInt(cfg.durationRangeMs[0], cfg.durationRangeMs[1]);
+  return cfg.durationMs;
+}
+
+function rotateSlotNow(slot, now = Date.now(), forcedRarity = null) {
+  if (!slot) return;
+  if (slot.slotType === "special" && !forcedRarity) {
+    Object.assign(slot, createEmptySlot(slot.slotId, "special"));
+    return;
+  }
+  const rarity = forcedRarity || pickRarityForSlot(slot.slotType);
+  const candidates = SHOP_CATALOG.filter((x) => x.rarity === rarity);
+  const item = candidates[randInt(0, Math.max(0, candidates.length - 1))] || SHOP_CATALOG[0];
+  const rarityMultMap = { common: 1, uncommon: 1.12, rare: 1.26, epic: 1.45, legendary: 1.75, mythic: 2.1 };
+  const price = Math.max(1, Math.round(item.basePrice * (rarityMultMap[rarity] || 1)));
+  slot.itemId = item.id;
+  slot.name = item.name;
+  slot.rarity = rarity;
+  slot.price = price;
+  slot.createdAt = now;
+  slot.expiresAt = now + durationForRarity(rarity);
+}
+
+function processSpecialSpawns(shopState, now = Date.now()) {
+  const schedule = db.dailyShopSchedules[shopState.dateKey];
+  if (!schedule || !Array.isArray(schedule.specialSpawns)) return;
+  const due = schedule.specialSpawns.filter((ts) => ts > Number(shopState.lastProcessedSpawnAt || 0) && ts <= now);
+  if (!due.length) return;
+  const specials = shopState.slots.filter((slot) => slot.slotType === "special");
+  for (const ts of due) {
+    const openSlot = specials.find((slot) => !slot.itemId || now >= Number(slot.expiresAt || 0));
+    if (!openSlot) continue;
+    rotateSlotNow(openSlot, ts, pickRarityForSlot("special"));
+    shopState.lastProcessedSpawnAt = ts;
+  }
+  if (due.length) {
+    shopState.lastProcessedSpawnAt = Math.max(Number(shopState.lastProcessedSpawnAt || 0), due[due.length - 1]);
+  }
+}
+
+async function processRotatingShopState(now = Date.now()) {
+  const shopState = ensureShopState(now);
+  let dirty = false;
+  for (const slot of shopState.slots) {
+    if (slot.slotType === "normal") {
+      if (!slot.itemId || now >= Number(slot.expiresAt || 0)) {
+        rotateSlotNow(slot, now);
+        dirty = true;
+      }
+    } else if (slot.slotType === "special") {
+      if (slot.itemId && now >= Number(slot.expiresAt || 0)) {
+        rotateSlotNow(slot, now, null);
+        dirty = true;
+      }
+    }
+  }
+  const before = JSON.stringify(shopState.slots);
+  processSpecialSpawns(shopState, now);
+  if (before !== JSON.stringify(shopState.slots)) dirty = true;
+  shopState.lastUpdatedAt = now;
+  if (dirty) await persistDb();
+}
+
+function createOrderForSlot(username, slot) {
+  const now = Date.now();
+  const [minMin, maxMin] = DELIVERY_MIN_MAX_BY_RARITY_MIN[slot.rarity] || DELIVERY_MIN_MAX_BY_RARITY_MIN.common;
+  const etaMs = randInt(minMin, maxMin) * 60 * 1000;
+  const etaAt = now + etaMs;
+  const shippedAt = now + Math.max(60 * 1000, Math.floor(etaMs * 0.25));
+  const outForDeliveryAt = now + Math.max(2 * 60 * 1000, Math.floor(etaMs * 0.75));
+  return {
+    orderId: `ord_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
+    userId: username,
+    trackingId: buildTrackingId(),
+    items: [{ itemId: slot.itemId, name: slot.name, qty: 1, price: slot.price, rarity: slot.rarity }],
+    subtotal: slot.price,
+    shippingFee: 0,
+    total: slot.price,
+    status: "Processing",
+    createdAt: now,
+    etaAt,
+    shippedAt,
+    outForDeliveryAt,
+    deliveredAt: null,
+    inventoryGranted: false,
+    timeline: [{ status: "Processing", at: now }]
+  };
+}
+
+function buildTrackingId() {
+  let digits = "";
+  for (let i = 0; i < 10; i += 1) digits += String(randInt(0, 9));
+  return `MS${digits}`;
+}
+
+async function processOrderStatusUpdates() {
+  const now = Date.now();
+  let dirty = false;
+
+  for (const order of Object.values(db.orders)) {
+    if (!order || order.status === "Delivered") {
+      if (order && order.status === "Delivered" && !order.inventoryGranted) {
+        grantDeliveredItems(order);
+        order.inventoryGranted = true;
+        order.deliveredAt = order.deliveredAt || now;
+        dirty = true;
+      }
+      continue;
+    }
+
+    let nextStatus = "Processing";
+    if (now >= order.etaAt) nextStatus = "Delivered";
+    else if (now >= order.outForDeliveryAt) nextStatus = "OutForDelivery";
+    else if (now >= order.shippedAt) nextStatus = "Shipped";
+
+    if (nextStatus !== order.status) {
+      order.status = nextStatus;
+      order.timeline.push({ status: nextStatus, at: now });
+      dirty = true;
+      if (nextStatus === "Delivered") {
+        order.deliveredAt = now;
+        if (!order.inventoryGranted) {
+          grantDeliveredItems(order);
+          order.inventoryGranted = true;
+        }
+      }
+    }
+  }
+
+  if (dirty) await persistDb();
+}
+
+function grantDeliveredItems(order) {
+  const username = order.userId;
+  const account = db.userProgress[username];
+  if (!account || !account.progress || typeof account.progress !== "object") return;
+  const progress = account.progress;
+  if (!progress.inventory || typeof progress.inventory !== "object") progress.inventory = {};
+
+  for (const line of order.items || []) {
+    const item = SHOP_CATALOG.find((x) => x.id === line.itemId);
+    const maxStack = item?.maxStack || 99;
+    const current = Number(progress.inventory[line.itemId]?.qty || 0);
+    const next = Math.min(maxStack, current + Math.max(1, Number(line.qty) || 1));
+    progress.inventory[line.itemId] = { qty: next };
+  }
+  account.updatedAt = new Date().toISOString();
+}
+
 async function parseJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -646,6 +1075,10 @@ function normalizeUsername(value) {
     .slice(0, 20);
 }
 
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
 async function loadDb() {
   try {
     const raw = await fs.readFile(DB_PATH, "utf8");
@@ -654,10 +1087,15 @@ async function loadDb() {
       listings: Array.isArray(parsed.listings) ? parsed.listings : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       userProgress: parsed.userProgress && typeof parsed.userProgress === "object" ? parsed.userProgress : {},
-      generatedImages: parsed.generatedImages && typeof parsed.generatedImages === "object" ? parsed.generatedImages : {}
+      generatedImages: parsed.generatedImages && typeof parsed.generatedImages === "object" ? parsed.generatedImages : {},
+      rotatingShop: parsed.rotatingShop && typeof parsed.rotatingShop === "object" ? parsed.rotatingShop : {},
+      orders: parsed.orders && typeof parsed.orders === "object" ? parsed.orders : {},
+      userOrders: parsed.userOrders && typeof parsed.userOrders === "object" ? parsed.userOrders : {},
+      dailyShopSchedules: parsed.dailyShopSchedules && typeof parsed.dailyShopSchedules === "object" ? parsed.dailyShopSchedules : {},
+      shopState: parsed.shopState && typeof parsed.shopState === "object" ? parsed.shopState : null
     };
   } catch {
-    const empty = { listings: [], sessions: [], userProgress: {}, generatedImages: {} };
+    const empty = { listings: [], sessions: [], userProgress: {}, generatedImages: {}, rotatingShop: {}, orders: {}, userOrders: {}, dailyShopSchedules: {}, shopState: null };
     await fs.writeFile(DB_PATH, JSON.stringify(empty, null, 2), "utf8");
     return empty;
   }

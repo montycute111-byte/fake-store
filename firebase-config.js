@@ -1,4 +1,10 @@
-// Local fallback only.
-// In Vercel, /api/firebase-config.js should set window.FIREBASE_CONFIG from env vars first.
-window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || null;
-window.FIREBASE_CONFIG_SOURCE = window.FIREBASE_CONFIG ? "local-fallback-file" : "unset";
+const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "bank-sim-e1116.firebaseapp.com",
+    projectId: "bank-sim-e1116",
+    storageBucket: "bank-sim-e1116.firebasestorage.app",
+    messagingSenderId: "1007081823271",
+    appId: "1:1007081823271:web:90174d4579f52204e2c202"
+};
+
+window.FIREBASE_CONFIG = firebaseConfig;

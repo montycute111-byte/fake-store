@@ -337,6 +337,7 @@
   let saveTimer = null;
   let saveInFlight = false;
   let cloudDirty = false;
+  const CLOUD_SAVE_TIMEOUT_MS = 8000;
 
   let purchaseLock = false;
   let serverSession = { username: "", password: "" };
@@ -632,6 +633,23 @@
     localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(accounts));
   }
 
+  function withTimeout(promise, ms, message) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(message));
+      }, ms);
+      Promise.resolve(promise)
+        .then((value) => {
+          clearTimeout(timer);
+          resolve(value);
+        })
+        .catch((err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+    });
+  }
+
   async function loginLocalUser(username, password) {
     const key = String(username || "").trim().toLowerCase();
     const accounts = loadLocalAccounts();
@@ -694,13 +712,21 @@
     const data = snap.data() || {};
     const loaded = migrateState(data.gameState || {});
     if (Number.isFinite(data.balance)) loaded.bankBalance = Number(data.balance);
-    const invSnap = await firebaseApi.getDoc(inventoryDocRef(uid));
-    if (invSnap.exists()) {
-      loaded.inventory = invSnap.data()?.items && typeof invSnap.data().items === "object" ? invSnap.data().items : loaded.inventory;
+    try {
+      const invSnap = await firebaseApi.getDoc(inventoryDocRef(uid));
+      if (invSnap.exists()) {
+        loaded.inventory = invSnap.data()?.items && typeof invSnap.data().items === "object" ? invSnap.data().items : loaded.inventory;
+      }
+    } catch (err) {
+      console.warn("[cloud-load] Inventory read failed; continuing with gameState inventory.", err?.code || err?.message || err);
     }
-    const boostsSnap = await firebaseApi.getDoc(activeBoostsDocRef(uid));
-    if (boostsSnap.exists()) {
-      loaded.activeBoosts = normalizeBoostMap(boostsSnap.data()?.boosts || {});
+    try {
+      const boostsSnap = await firebaseApi.getDoc(activeBoostsDocRef(uid));
+      if (boostsSnap.exists()) {
+        loaded.activeBoosts = normalizeBoostMap(boostsSnap.data()?.boosts || {});
+      }
+    } catch (err) {
+      console.warn("[cloud-load] Active boosts read failed; continuing with gameState boosts.", err?.code || err?.message || err);
     }
     replaceState(loaded);
     saveLocalState();
@@ -710,6 +736,7 @@
   async function saveUserGameState(uid, gameState) {
     if (!firebaseReady || !uid) return;
     const userRef = firebaseApi.doc(db, "users", uid);
+    const warnings = [];
     await firebaseApi.setDoc(userRef, {
       email: auth.currentUser?.email || "",
       username: usernameFromUser(auth.currentUser),
@@ -720,7 +747,12 @@
       balance: Number(gameState.bankBalance || 0),
       gameState
     }, { merge: true });
-    await firebaseApi.setDoc(inventoryDocRef(uid), { items: gameState.inventory || {} }, { merge: true });
+    try {
+      await firebaseApi.setDoc(inventoryDocRef(uid), { items: gameState.inventory || {} }, { merge: true });
+    } catch (err) {
+      warnings.push("inventory");
+      console.warn("[cloud-save] Inventory sync failed; core save still succeeded.", err?.code || err?.message || err);
+    }
     const boostPayload = {};
     for (const [boostId, boost] of Object.entries(gameState.activeBoosts || {})) {
       const startedMs = stampMs(boost.startedAt) || Date.now();
@@ -738,10 +770,16 @@
         expiresAt: firebaseApi.Timestamp.fromMillis(endsMs)
       };
     }
-    await firebaseApi.setDoc(activeBoostsDocRef(uid), {
-      boosts: boostPayload,
-      updatedAt: firebaseApi.serverTimestamp()
-    }, { merge: true });
+    try {
+      await firebaseApi.setDoc(activeBoostsDocRef(uid), {
+        boosts: boostPayload,
+        updatedAt: firebaseApi.serverTimestamp()
+      }, { merge: true });
+    } catch (err) {
+      warnings.push("boosts");
+      console.warn("[cloud-save] Active boosts sync failed; core save still succeeded.", err?.code || err?.message || err);
+    }
+    return warnings;
   }
 
   async function flushCloudSave() {
@@ -755,11 +793,18 @@
     cloudDirty = false;
     setSaveStatus("saving");
     try {
-      await saveUserGameState(currentUid, exportGameStateForSave());
+      await withTimeout(
+        saveUserGameState(currentUid, exportGameStateForSave()),
+        CLOUD_SAVE_TIMEOUT_MS,
+        "cloud-save-timeout"
+      );
       setSaveStatus("saved");
     } catch (err) {
       cloudDirty = true;
-      setSaveStatus(navigator.onLine ? "error" : "offline", err?.code || "");
+      setSaveStatus(
+        navigator.onLine ? "error" : "offline",
+        err?.code || err?.message || "unknown"
+      );
     } finally {
       saveInFlight = false;
       if (cloudDirty) scheduleAutosave();
@@ -1063,12 +1108,6 @@
         console.error("Profile sync failed:", err);
         toast(`Profile sync failed: ${err?.message || "unknown error"}`);
       }
-      try {
-        startSocialListeners();
-      } catch (err) {
-        console.error("Social listeners failed:", err);
-        toast(`Social features unavailable: ${err?.message || "unknown error"}`);
-      }
     }
 
     if (hasServerSession()) {
@@ -1113,20 +1152,55 @@
     }
   }
 
+  function assertModularFirestoreReady() {
+    if (!firebaseReady || !db) {
+      throw new Error("Cloud features require login on deployed site.");
+    }
+    if (
+      typeof firebaseApi.doc !== "function" ||
+      typeof firebaseApi.collection !== "function" ||
+      typeof firebaseApi.query !== "function" ||
+      typeof firebaseApi.getDoc !== "function" ||
+      typeof firebaseApi.getDocs !== "function"
+    ) {
+      const err = new Error("Firebase is expected to use the modular Firestore SDK, but Firestore helpers are missing.");
+      console.error("[firebase-init] Modular Firestore helper mismatch.", {
+        hasDb: Boolean(db),
+        hasCollectionFn: typeof firebaseApi.collection === "function",
+        hasDocFn: typeof firebaseApi.doc === "function",
+        hasQueryFn: typeof firebaseApi.query === "function"
+      });
+      throw err;
+    }
+    if (typeof db.collection === "function") {
+      console.warn("[firebase-init] Compat-style Firestore instance detected, but this app is standardized on modular SDK.");
+    }
+  }
+
+  function fsDoc(...segments) {
+    assertModularFirestoreReady();
+    return firebaseApi.doc(db, ...segments);
+  }
+
+  function fsCollection(...segments) {
+    assertModularFirestoreReady();
+    return firebaseApi.collection(db, ...segments);
+  }
+
   function friendDocRef(uid, friendUid) {
-    return firebaseApi.doc(db, "friends", uid, "list", friendUid);
+    return fsDoc("friends", uid, "list", friendUid);
   }
 
   function userDocRef(uid) {
-    return firebaseApi.doc(db, "users", uid);
+    return fsDoc("users", uid);
   }
 
   function inventoryDocRef(uid) {
-    return firebaseApi.doc(db, "inventories", uid);
+    return fsDoc("inventories", uid);
   }
 
   function activeBoostsDocRef(uid) {
-    return firebaseApi.doc(db, "activeBoosts", uid);
+    return fsDoc("activeBoosts", uid);
   }
 
   function normalizeBoostMap(boostMap) {
@@ -1165,7 +1239,7 @@
     const uid = user.uid;
     const usernameLower = usernameFromUser(user);
     const userRef = userDocRef(uid);
-    const usernameRef = firebaseApi.doc(db, "usernames", usernameLower);
+    const usernameRef = fsDoc("usernames", usernameLower);
 
     await firebaseApi.runTransaction(db, async (tx) => {
       const userSnap = await tx.get(userRef);
@@ -1197,7 +1271,7 @@
 
       tx.set(usernameRef, { uid, createdAt: firebaseApi.serverTimestamp() }, { merge: true });
       if (oldUsername && oldUsername !== usernameLower) {
-        tx.delete(firebaseApi.doc(db, "usernames", oldUsername));
+        tx.delete(fsDoc("usernames", oldUsername));
       }
     });
   }
@@ -1209,7 +1283,7 @@
     for (let i = 0; i < missing.length; i += 10) {
       const chunk = missing.slice(i, i + 10);
       const q = firebaseApi.query(
-        firebaseApi.collection(db, "users"),
+        fsCollection("users"),
         firebaseApi.where(firebaseApi.documentId(), "in", chunk)
       );
       const snap = await firebaseApi.getDocs(q);
@@ -1231,23 +1305,24 @@
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
     if (!toUid) throw new Error("Choose a user.");
     if (uid === toUid) throw new Error("You cannot add yourself.");
+
     const reqId = `${uid}_${toUid}`;
     const reverseReqId = `${toUid}_${uid}`;
-    const reqRef = firebaseApi.doc(db, "friendRequests", reqId);
-    const reverseRef = firebaseApi.doc(db, "friendRequests", reverseReqId);
+    const reqRef = fsDoc("friendRequests", reqId);
+    const reverseRef = fsDoc("friendRequests", reverseReqId);
 
     await firebaseApi.runTransaction(db, async (tx) => {
-      const [friendA, friendB, reqSnap, reverseSnap] = await Promise.all([
-        tx.get(friendDocRef(uid, toUid)),
-        tx.get(friendDocRef(toUid, uid)),
-        tx.get(reqRef),
-        tx.get(reverseRef)
-      ]);
+      const friendA = await tx.get(friendDocRef(uid, toUid));
+      const friendB = await tx.get(friendDocRef(toUid, uid));
+      const reqSnap = await tx.get(reqRef);
+      const reverseSnap = await tx.get(reverseRef);
+
       if (friendA.exists() && friendB.exists()) throw new Error("Already friends.");
       if (reqSnap.exists() && reqSnap.data()?.status === "pending") throw new Error("Request already sent.");
       if (reverseSnap.exists() && reverseSnap.data()?.status === "pending") {
         throw new Error("They already requested you. Accept from Incoming Requests.");
       }
+
       tx.set(reqRef, {
         fromUid: uid,
         toUid,
@@ -1262,13 +1337,15 @@
     const uid = getCurrentUid();
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
     if (!fromUid) throw new Error("Invalid request.");
-    const reqRef = firebaseApi.doc(db, "friendRequests", `${fromUid}_${uid}`);
+
+    const reqRef = fsDoc("friendRequests", `${fromUid}_${uid}`);
     await firebaseApi.runTransaction(db, async (tx) => {
       const snap = await tx.get(reqRef);
       if (!snap.exists()) throw new Error("Request not found.");
       const req = snap.data() || {};
       if (req.status !== "pending") throw new Error("Request is not pending.");
       if (req.toUid !== uid) throw new Error("Not allowed.");
+
       tx.set(friendDocRef(uid, fromUid), { uid: fromUid, since: firebaseApi.serverTimestamp() }, { merge: true });
       tx.set(friendDocRef(fromUid, uid), { uid, since: firebaseApi.serverTimestamp() }, { merge: true });
       tx.update(reqRef, { status: "accepted", updatedAt: firebaseApi.serverTimestamp() });
@@ -1279,7 +1356,7 @@
     const uid = getCurrentUid();
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
     if (!fromUid) throw new Error("Invalid request.");
-    const reqRef = firebaseApi.doc(db, "friendRequests", `${fromUid}_${uid}`);
+    const reqRef = fsDoc("friendRequests", `${fromUid}_${uid}`);
     await firebaseApi.updateDoc(reqRef, { status: "declined", updatedAt: firebaseApi.serverTimestamp() });
   }
 
@@ -1287,7 +1364,7 @@
     const uid = getCurrentUid();
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
     if (!toUid) throw new Error("Invalid request.");
-    const reqRef = firebaseApi.doc(db, "friendRequests", `${uid}_${toUid}`);
+    const reqRef = fsDoc("friendRequests", `${uid}_${toUid}`);
     await firebaseApi.updateDoc(reqRef, { status: "canceled", updatedAt: firebaseApi.serverTimestamp() });
   }
 
@@ -1336,18 +1413,18 @@
     if (money > 50000) throw new Error("Max transfer is 50,000.");
 
     await firebaseApi.runTransaction(db, async (tx) => {
-      const [fwd, rev, fromSnap, toSnap] = await Promise.all([
-        tx.get(friendDocRef(uid, friendUid)),
-        tx.get(friendDocRef(friendUid, uid)),
-        tx.get(userDocRef(uid)),
-        tx.get(userDocRef(friendUid))
-      ]);
+      const fwd = await tx.get(friendDocRef(uid, friendUid));
+      const rev = await tx.get(friendDocRef(friendUid, uid));
+      const fromSnap = await tx.get(userDocRef(uid));
+      const toSnap = await tx.get(userDocRef(friendUid));
+
       if (!fwd.exists() || !rev.exists()) throw new Error("You can only send money to friends.");
+
       const fromBalance = Number(fromSnap.data()?.balance ?? state.bankBalance ?? 0);
       const toBalance = Number(toSnap.data()?.balance ?? 0);
       if (fromBalance < money) throw new Error("Insufficient balance.");
 
-      const transferRef = firebaseApi.doc(firebaseApi.collection(db, "transfers"));
+      const transferRef = firebaseApi.doc(fsCollection("transfers"));
       tx.set(transferRef, {
         fromUid: uid,
         toUid: friendUid,
@@ -1366,6 +1443,7 @@
         lastActiveAt: firebaseApi.serverTimestamp()
       }, { merge: true });
     });
+
     state.bankBalance = Math.max(0, state.bankBalance - money);
     addTx("send_money", -money, { toUid: friendUid, note: String(note || "").slice(0, 120) });
     saveState();
@@ -1375,6 +1453,7 @@
     const uid = getCurrentUid();
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
     if (!toUid || toUid === uid) throw new Error("Pick a valid friend.");
+
     const offerMoney = Math.max(0, Math.floor(Number(offer?.money || 0)));
     const requestMoney = Math.max(0, Math.floor(Number(request?.money || 0)));
     const offerItems = offer?.items || {};
@@ -1386,19 +1465,19 @@
     }
 
     await firebaseApi.runTransaction(db, async (tx) => {
-      const [fwd, rev, fromUser, fromInv] = await Promise.all([
-        tx.get(friendDocRef(uid, toUid)),
-        tx.get(friendDocRef(toUid, uid)),
-        tx.get(userDocRef(uid)),
-        tx.get(inventoryDocRef(uid))
-      ]);
+      const fwd = await tx.get(friendDocRef(uid, toUid));
+      const rev = await tx.get(friendDocRef(toUid, uid));
+      const fromUser = await tx.get(userDocRef(uid));
+      const fromInv = await tx.get(inventoryDocRef(uid));
+
       if (!fwd.exists() || !rev.exists()) throw new Error("Trades are only allowed with friends.");
+
       const fromBalance = Number(fromUser.data()?.balance ?? state.bankBalance ?? 0);
-      const fromItems = (fromInv.data()?.items || state.inventory || {});
+      const fromItems = fromInv.data()?.items || state.inventory || {};
       if (fromBalance < offerMoney) throw new Error("Not enough offered money.");
       if (!hasEnoughItems(fromItems, offerItems)) throw new Error("Not enough offered items.");
 
-      const tradeRef = firebaseApi.doc(firebaseApi.collection(db, "trades"));
+      const tradeRef = firebaseApi.doc(fsCollection("trades"));
       tx.set(tradeRef, {
         fromUid: uid,
         toUid,
@@ -1416,30 +1495,32 @@
     const uid = getCurrentUid();
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
     if (!tradeId) throw new Error("Invalid trade.");
-    const tradeRef = firebaseApi.doc(db, "trades", tradeId);
+
+    const tradeRef = fsDoc("trades", tradeId);
     await firebaseApi.runTransaction(db, async (tx) => {
       const tradeSnap = await tx.get(tradeRef);
       if (!tradeSnap.exists()) throw new Error("Trade not found.");
+
       const trade = tradeSnap.data() || {};
       if (trade.status !== "pending") throw new Error("Trade is not pending.");
       if (trade.toUid !== uid) throw new Error("Only recipient can accept.");
 
       const fromUid = trade.fromUid;
       const toUid = trade.toUid;
-      const [fwd, rev, fromUser, toUser, fromInv, toInv] = await Promise.all([
-        tx.get(friendDocRef(fromUid, toUid)),
-        tx.get(friendDocRef(toUid, fromUid)),
-        tx.get(userDocRef(fromUid)),
-        tx.get(userDocRef(toUid)),
-        tx.get(inventoryDocRef(fromUid)),
-        tx.get(inventoryDocRef(toUid))
-      ]);
+      const fwd = await tx.get(friendDocRef(fromUid, toUid));
+      const rev = await tx.get(friendDocRef(toUid, fromUid));
+      const fromUser = await tx.get(userDocRef(fromUid));
+      const toUser = await tx.get(userDocRef(toUid));
+      const fromInv = await tx.get(inventoryDocRef(fromUid));
+      const toInv = await tx.get(inventoryDocRef(toUid));
+
       if (!fwd.exists() || !rev.exists()) throw new Error("Users are no longer friends.");
 
       const offer = trade.offer || { money: 0, items: {} };
       const request = trade.request || { money: 0, items: {} };
       const fromBalance = Number(fromUser.data()?.balance ?? 0);
       const toBalance = Number(toUser.data()?.balance ?? 0);
+
       if (fromBalance < Number(offer.money || 0)) throw new Error("Sender no longer has offered money.");
       if (toBalance < Number(request.money || 0)) throw new Error("You no longer have requested money.");
 
@@ -1471,7 +1552,7 @@
     const uid = getCurrentUid();
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
     if (!tradeId) throw new Error("Invalid trade.");
-    const tradeRef = firebaseApi.doc(db, "trades", tradeId);
+    const tradeRef = fsDoc("trades", tradeId);
     const snap = await firebaseApi.getDoc(tradeRef);
     if (!snap.exists()) throw new Error("Trade not found.");
     const trade = snap.data() || {};
@@ -1484,38 +1565,63 @@
   async function runFriendSearch() {
     const uid = getCurrentUid();
     if (!firebaseReady || !uid) throw new Error("Cloud features require login on deployed site.");
-    const term = sanitizeUsername(dom.friendSearchInput?.value || "");
-    if (!term) {
+    const rawTerm = String(dom.friendSearchInput?.value || "").trim();
+    const term = sanitizeUsername(rawTerm);
+    if (!term && !rawTerm) {
       social.searchResults = [];
       renderSocialSections();
       return;
     }
     const results = [];
-    const usernameSnap = await firebaseApi.getDoc(firebaseApi.doc(db, "usernames", term));
-    if (usernameSnap.exists()) {
-      const foundUid = String(usernameSnap.data()?.uid || "");
-      if (foundUid && foundUid !== uid) results.push(foundUid);
+    if (term) {
+      try {
+        const usernameSnap = await firebaseApi.getDoc(firebaseApi.doc(db, "usernames", term));
+        if (usernameSnap.exists()) {
+          const foundUid = String(usernameSnap.data()?.uid || "");
+          if (foundUid && foundUid !== uid) results.push(foundUid);
+        }
+      } catch (err) {
+        console.warn("[friends] Username index lookup failed.", err?.code || err?.message || err);
+      }
     }
-    const prefixQ = firebaseApi.query(
-      firebaseApi.collection(db, "users"),
-      firebaseApi.where("usernameLower", ">=", term),
-      firebaseApi.where("usernameLower", "<=", `${term}\uf8ff`),
-      firebaseApi.limit(8)
-    );
-    const displayQ = firebaseApi.query(
-      firebaseApi.collection(db, "users"),
-      firebaseApi.where("displayName", ">=", term),
-      firebaseApi.where("displayName", "<=", `${term}\uf8ff`),
-      firebaseApi.limit(5)
-    );
-    const [snap, displaySnap] = await Promise.all([firebaseApi.getDocs(prefixQ), firebaseApi.getDocs(displayQ)]);
-    snap.forEach((d) => {
-      if (d.id !== uid && !results.includes(d.id)) results.push(d.id);
-      socialProfiles.set(d.id, d.data() || {});
-    });
-    displaySnap.forEach((d) => {
-      if (d.id !== uid && !results.includes(d.id)) results.push(d.id);
-      socialProfiles.set(d.id, d.data() || {});
+
+    const queries = [];
+    if (term) {
+      queries.push(firebaseApi.query(
+        fsCollection("users"),
+        firebaseApi.where("usernameLower", "==", term),
+        firebaseApi.limit(5)
+      ));
+      queries.push(firebaseApi.query(
+        fsCollection("users"),
+        firebaseApi.where("username", "==", term),
+        firebaseApi.limit(5)
+      ));
+      queries.push(firebaseApi.query(
+        fsCollection("users"),
+        firebaseApi.where("usernameLower", ">=", term),
+        firebaseApi.where("usernameLower", "<=", `${term}\uf8ff`),
+        firebaseApi.limit(8)
+      ));
+    }
+    if (rawTerm) {
+      queries.push(firebaseApi.query(
+        fsCollection("users"),
+        firebaseApi.where("displayName", "==", rawTerm),
+        firebaseApi.limit(5)
+      ));
+    }
+
+    const queryResults = await Promise.allSettled(queries.map((q) => firebaseApi.getDocs(q)));
+    queryResults.forEach((result) => {
+      if (result.status !== "fulfilled") {
+        console.warn("[friends] Search query failed.", result.reason?.code || result.reason?.message || result.reason);
+        return;
+      }
+      result.value.forEach((d) => {
+        if (d.id !== uid && !results.includes(d.id)) results.push(d.id);
+        socialProfiles.set(d.id, d.data() || {});
+      });
     });
     await refreshProfilesForUids(results);
     social.searchResults = results;
@@ -3532,10 +3638,7 @@
       spend: [dom.tabSpendBtn, dom.spendTab],
       store: [dom.tabStoreBtn, dom.storeTab],
       inventory: [dom.tabInventoryBtn, dom.inventoryTab],
-      orders: [dom.tabOrdersBtn, dom.ordersTab],
-      friends: [dom.tabFriendsBtn, dom.friendsTab],
-      trade: [dom.tabTradeBtn, dom.tradeTab],
-      send: [dom.tabSendBtn, dom.sendTab]
+      orders: [dom.tabOrdersBtn, dom.ordersTab]
     };
 
     for (const [key, [btn, panel]] of Object.entries(tabs)) {
@@ -3571,9 +3674,6 @@
     dom.tabStoreBtn.onclick = () => setActiveTab("store");
     dom.tabInventoryBtn.onclick = () => setActiveTab("inventory");
     dom.tabOrdersBtn.onclick = () => setActiveTab("orders");
-    dom.tabFriendsBtn.onclick = () => setActiveTab("friends");
-    dom.tabTradeBtn.onclick = () => setActiveTab("trade");
-    dom.tabSendBtn.onclick = () => setActiveTab("send");
     dom.bizTabBusinessesBtn.onclick = () => setBusinessTab("businesses");
     dom.bizTabUpgradesBtn.onclick = () => setBusinessTab("upgrades");
     dom.bizTabManagersBtn.onclick = () => setBusinessTab("managers");
@@ -3591,32 +3691,10 @@
     dom.restartBusinessesBtn.onclick = restartAllBusinesses;
     dom.coinFlipBtn.onclick = coinFlip;
     dom.trackingSearchBtn.onclick = trackOrderByTrackingId;
-    dom.friendSearchBtn.onclick = () => { runFriendSearch().catch((e) => toast(e.message || "Search failed.")); };
-    dom.friendSearchInput.onkeydown = (e) => { if (e.key === "Enter") dom.friendSearchBtn.click(); };
-    dom.sendMoneyBtn.onclick = async () => {
-      try {
-        await sendMoney(dom.sendFriendSelect.value, dom.sendAmountInput.value, dom.sendNoteInput.value);
-        toast("Money sent.");
-      } catch (e) {
-        toast(e.message || "Send failed.");
-      }
-    };
-    dom.createTradeBtn.onclick = async () => {
-      try {
-        await createTrade(
-          dom.tradeFriendSelect.value,
-          { money: dom.tradeOfferMoneyInput.value, items: parseItemMap(dom.tradeOfferItemsInput.value) },
-          { money: dom.tradeRequestMoneyInput.value, items: parseItemMap(dom.tradeRequestItemsInput.value) }
-        );
-        toast("Trade offer created.");
-      } catch (e) {
-        toast(e.message || "Trade failed.");
-      }
-    };
 
-    dom.saveNowBtn.onclick = () => {
+    dom.saveNowBtn.onclick = async () => {
       saveState();
-      if (!localAuthMode) flushCloudSave();
+      if (!localAuthMode) await flushCloudSave();
       toast("Save requested.");
     };
 
