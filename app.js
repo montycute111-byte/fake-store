@@ -2,6 +2,7 @@
   const STORAGE_KEY = "fakebank_state_v1";
   const LOCAL_USER_KEY = "fakebank_local_user";
   const LOCAL_ACCOUNTS_KEY = "fakebank_local_accounts_v1";
+  const PENDING_CLOUD_SAVE_KEY = "fakebank_pending_cloud_save_v1";
   const REQUIRED_FIREBASE_KEYS = ["apiKey", "authDomain", "projectId", "appId"];
 
   const SCHEMA_VERSION = 2;
@@ -335,13 +336,32 @@
   let tick30sHandle = null;
   let tick12sHandle = null;
   let saveTimer = null;
+  let saveStatusTimer = null;
   let saveInFlight = false;
   let cloudDirty = false;
+  let saveTraceLogged = false;
+  let saveScheduledAt = 0;
+  let pendingSaveReason = "";
+  let pendingCloudSnapshot = null;
+  let lastSaveAttemptAt = 0;
+  let backoffAttemptCount = 0;
+  const saveRequestTimestamps = [];
+  let cloudHydrationInFlight = false;
   let authActionInFlight = false;
   const CLOUD_SAVE_TIMEOUT_MS = 8000;
+  const CLOUD_SAVE_DEBOUNCE_MS = 1200;
+  const CLOUD_SAVE_MIN_INTERVAL_MS = 8000;
+  const BACKGROUND_SAVE_DEBOUNCE_MS = 5000;
+  const BACKGROUND_SAVE_MIN_INTERVAL_MS = 60000;
+  const CLOUD_SAVE_MAX_BACKOFF_MS = 60000;
+  const MAX_AUTOMATIC_RATE_RETRIES = 3;
+  let lastCloudSaveAt = 0;
+  let nextCloudSaveAllowedAt = 0;
+  let saveStatusState = { status: "saved", detail: "local", at: 0 };
 
   let purchaseLock = false;
   let serverSession = { username: "", password: "" };
+  let progressApiProxyAvailable = null;
   let serverShopSlots = [];
   let serverShopLastUpdatedAt = null;
   let serverOrders = [];
@@ -438,13 +458,148 @@
     toast._t = setTimeout(() => dom.toast.classList.add("hidden"), 2400);
   }
 
-  function setSaveStatus(status, detail = "") {
+  function getPendingCloudStorageKey() {
+    const localUser = localStorage.getItem(LOCAL_USER_KEY);
+    const accountKey = localUser ? String(localUser).trim().toLowerCase() : "default";
+    return `${PENDING_CLOUD_SAVE_KEY}__${accountKey}`;
+  }
+
+  function persistPendingCloudState(payload) {
+    try {
+      if (!payload) {
+        localStorage.removeItem(getPendingCloudStorageKey());
+        return;
+      }
+      localStorage.setItem(getPendingCloudStorageKey(), JSON.stringify({
+        savedAt: Date.now(),
+        payload
+      }));
+    } catch {
+      // Ignore localStorage quota errors; in-memory state is still authoritative.
+    }
+  }
+
+  function estimatePayloadSize(payload) {
+    try {
+      return JSON.stringify(payload).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  function logSaveEvent(event, meta = {}) {
+    console.info("[save-pipeline]", event, meta);
+  }
+
+  function finalizeSuccessfulSave(payload) {
+    lastCloudSaveAt = Date.now();
+    nextCloudSaveAllowedAt = 0;
+    backoffAttemptCount = 0;
+    if (pendingCloudSnapshot === payload) {
+      cloudDirty = false;
+      pendingCloudSnapshot = null;
+      persistPendingCloudState(null);
+    } else {
+      cloudDirty = true;
+      persistPendingCloudState(pendingCloudSnapshot);
+    }
+    saveLocalState();
+  }
+
+  function isRateLimitError(err) {
+    const detail = String(err?.code || err?.message || err?.status || "").toLowerCase();
+    return (
+      err?.status === 429 ||
+      detail.includes("429") ||
+      detail.includes("resource_exhausted") ||
+      detail.includes("rate-limit") ||
+      detail.includes("quota")
+    );
+  }
+
+  function computeBackoffDelayMs() {
+    const base = Math.min(CLOUD_SAVE_MAX_BACKOFF_MS, 1000 * Math.pow(2, backoffAttemptCount));
+    const jitterFactor = 0.8 + (Math.random() * 0.4);
+    return Math.min(CLOUD_SAVE_MAX_BACKOFF_MS, Math.max(1000, Math.floor(base * jitterFactor)));
+  }
+
+  function isBackgroundSaveReason(reason = "") {
+    return reason === "tick1s" || reason === "tick30s";
+  }
+
+  function getAutosaveTimings(reason = "") {
+    if (isBackgroundSaveReason(reason)) {
+      return {
+        debounceMs: BACKGROUND_SAVE_DEBOUNCE_MS,
+        minIntervalMs: BACKGROUND_SAVE_MIN_INTERVAL_MS
+      };
+    }
+    return {
+      debounceMs: CLOUD_SAVE_DEBOUNCE_MS,
+      minIntervalMs: CLOUD_SAVE_MIN_INTERVAL_MS
+    };
+  }
+
+  function registerRateLimit(reason, detail) {
+    backoffAttemptCount += 1;
+    if (backoffAttemptCount > MAX_AUTOMATIC_RATE_RETRIES) {
+      nextCloudSaveAllowedAt = 0;
+      setSaveStatus("error", "rate-limited; waiting for next change");
+      logSaveEvent("rate-limit-paused", {
+        reason,
+        detail,
+        attempts: backoffAttemptCount
+      });
+      return false;
+    }
+    nextCloudSaveAllowedAt = Date.now() + computeBackoffDelayMs();
+    setSaveStatus("offline", "backoff");
+    logSaveEvent("rate-limited", {
+      reason,
+      detail,
+      retryInMs: nextCloudSaveAllowedAt - Date.now(),
+      attempts: backoffAttemptCount
+    });
+    return true;
+  }
+
+  function renderSaveStatus() {
     if (!dom.saveStatus) return;
-    const suffix = detail ? ` (${detail})` : "";
-    if (status === "saved") dom.saveStatus.textContent = `Save status: Saved${suffix}`;
-    else if (status === "saving") dom.saveStatus.textContent = `Save status: Saving...${suffix}`;
-    else if (status === "offline") dom.saveStatus.textContent = `Save status: Offline / pending${suffix}`;
-    else dom.saveStatus.textContent = `Save status: Save failed${suffix}`;
+    const now = Date.now();
+    const stateStatus = saveStatusState.status;
+    const detail = saveStatusState.detail || "";
+    let text = "Save status: Saved";
+
+    if (stateStatus === "saved") {
+      const at = saveStatusState.at ? new Date(saveStatusState.at).toLocaleTimeString() : "";
+      const suffix = detail ? ` (${detail})` : "";
+      text = at ? `Save status: Saved at ${at}${suffix}` : `Save status: Saved${suffix}`;
+    } else if (stateStatus === "saving") {
+      text = detail ? `Save status: Saving... (${detail})` : "Save status: Saving...";
+    } else if (stateStatus === "offline") {
+      if (nextCloudSaveAllowedAt && now < nextCloudSaveAllowedAt) {
+        text = `Save status: Rate-limited; retry in ${fmtDur(nextCloudSaveAllowedAt - now)}`;
+      } else if (!navigator.onLine) {
+        text = "Save status: Offline";
+      } else {
+        text = detail ? `Save status: Offline / pending (${detail})` : "Save status: Offline / pending";
+      }
+    } else {
+      text = detail ? `Save status: Save failed (${detail})` : "Save status: Save failed";
+    }
+
+    dom.saveStatus.textContent = text;
+
+    clearTimeout(saveStatusTimer);
+    saveStatusTimer = null;
+    if (nextCloudSaveAllowedAt && now < nextCloudSaveAllowedAt) {
+      saveStatusTimer = setTimeout(renderSaveStatus, 1000);
+    }
+  }
+
+  function setSaveStatus(status, detail = "") {
+    saveStatusState = { status, detail, at: Date.now() };
+    renderSaveStatus();
   }
 
   function setAuthBusy(isBusy) {
@@ -470,19 +625,28 @@
     sessionStorage.removeItem("server_shop_password");
   }
 
-  async function postJson(url, payload) {
+  async function postJson(url, payload, extraHeaders = {}) {
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...extraHeaders },
       body: JSON.stringify(payload)
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
       const err = new Error(data?.error || `Request failed (${resp.status})`);
       err.status = resp.status;
+      err.code = data?.code || data?.error || `http-${resp.status}`;
       throw err;
     }
     return data;
+  }
+
+  function isHostedContext() {
+    return window.location.protocol === "http:" || window.location.protocol === "https:";
+  }
+
+  function canUseProgressApiProxy() {
+    return isHostedContext() && progressApiProxyAvailable !== false;
   }
 
   function encodeFirestoreValue(value) {
@@ -544,6 +708,17 @@
     };
   }
 
+  async function getAuthApiHeaders() {
+    if (!firebaseReady || !auth?.currentUser) {
+      const err = new Error("unauthenticated");
+      err.code = "unauthenticated";
+      throw err;
+    }
+    return {
+      Authorization: `Bearer ${await auth.currentUser.getIdToken()}`
+    };
+  }
+
   function getFirestoreDocumentUrl(path) {
     const projectId = window.FIREBASE_CONFIG?.projectId;
     if (!projectId) {
@@ -555,6 +730,37 @@
   }
 
   async function restLoadUserDocument(uid) {
+    if (canUseProgressApiProxy()) {
+      if (firebaseReady && auth?.currentUser) {
+        try {
+          const data = await postJson("/api/progress/load", { uid }, await getAuthApiHeaders());
+          progressApiProxyAvailable = true;
+          if (data && Object.prototype.hasOwnProperty.call(data, "document")) {
+            return data.document || null;
+          }
+        } catch (err) {
+          if (err?.status === 404) {
+            progressApiProxyAvailable = false;
+          }
+        }
+      } else if (hasServerSession()) {
+        try {
+          const data = await postJson("/api/progress/load", {
+            username: serverSession.username,
+            password: serverSession.password
+          });
+          progressApiProxyAvailable = true;
+          if (data && Object.prototype.hasOwnProperty.call(data, "document")) {
+            return data.document || null;
+          }
+        } catch (err) {
+          if (err?.status === 404) {
+            progressApiProxyAvailable = false;
+          }
+        }
+      }
+    }
+
     const headers = await getFirestoreRestHeaders();
     const resp = await fetch(getFirestoreDocumentUrl(`users/${uid}`), {
       method: "GET",
@@ -571,6 +777,42 @@
   }
 
   async function restSaveUserDocument(uid, gameState) {
+    if (canUseProgressApiProxy()) {
+      if (firebaseReady && auth?.currentUser) {
+        try {
+          const data = await postJson("/api/progress/save", {
+            uid,
+            username: usernameFromUser(auth.currentUser),
+            email: auth.currentUser?.email || "",
+            balance: Number(gameState.bankBalance || 0),
+            gameState
+          }, await getAuthApiHeaders());
+          progressApiProxyAvailable = true;
+          return data;
+        } catch (err) {
+          if (err?.status !== 404) {
+            throw err;
+          }
+          progressApiProxyAvailable = false;
+        }
+      } else if (hasServerSession()) {
+        try {
+          const data = await postJson("/api/progress/save", {
+            username: serverSession.username,
+            password: serverSession.password,
+            progress: gameState
+          });
+          progressApiProxyAvailable = true;
+          return data;
+        } catch (err) {
+          if (err?.status !== 404) {
+            throw err;
+          }
+          progressApiProxyAvailable = false;
+        }
+      }
+    }
+
     const headers = await getFirestoreRestHeaders();
     const username = usernameFromUser(auth.currentUser);
     const body = {
@@ -738,8 +980,263 @@
     Object.assign(state, fresh);
   }
 
+  function finiteOrNull(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function shallowClone(value) {
+    if (value === null || value === undefined) return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return null;
+    }
+  }
+
+  function exportTxLogForSave(limit = 12) {
+    return (Array.isArray(state.txLog) ? state.txLog : [])
+      .slice(0, limit)
+      .map((entry) => ({
+        ts: finiteOrNull(entry?.ts) || Date.now(),
+        type: String(entry?.type || "event"),
+        amount: Number.isFinite(Number(entry?.amount)) ? Number(entry.amount) : 0,
+        meta: shallowClone(entry?.meta) || {}
+      }));
+  }
+
+  function exportActiveJobsForSave(limit = 6) {
+    return (Array.isArray(state.activeJobs) ? state.activeJobs : [])
+      .slice(0, limit)
+      .map((job) => ({
+        runId: String(job?.runId || uniqueId("job")),
+        jobId: String(job?.jobId || ""),
+        name: String(job?.name || job?.jobId || "Job"),
+        durationMin: Math.max(0, Number(job?.durationMin || 0)),
+        basePay: Math.max(0, Number(job?.basePay || 0)),
+        riskType: job?.riskType ? String(job.riskType) : null,
+        category: String(job?.category || "general"),
+        acceptedAt: finiteOrNull(job?.acceptedAt) || Date.now(),
+        finishAt: finiteOrNull(job?.finishAt) || Date.now()
+      }));
+  }
+
+  function exportInventoryForSave(limit = 250) {
+    const out = {};
+    const entries = Object.entries(state.inventory || {}).slice(0, limit);
+    entries.forEach(([itemId, itemState]) => {
+      const qty = Math.max(0, Math.floor(Number(itemState?.qty || 0)));
+      if (!qty) return;
+      out[itemId] = { qty };
+    });
+    return out;
+  }
+
+  function exportOrderTimeline(order, limit = 4) {
+    return (Array.isArray(order?.timeline) ? order.timeline : [])
+      .slice(-limit)
+      .map((event) => ({
+        status: String(event?.status || "Processing"),
+        at: finiteOrNull(event?.at) || Date.now()
+      }));
+  }
+
+  function exportOrderItems(order, limit = 5) {
+    return (Array.isArray(order?.items) ? order.items : [])
+      .slice(0, limit)
+      .map((line) => ({
+        itemId: String(line?.itemId || ""),
+        name: String(line?.name || line?.itemId || "Item"),
+        qty: Math.max(1, Math.floor(Number(line?.qty || 1))),
+        price: Math.max(0, Number(line?.price || 0))
+      }));
+  }
+
+  function exportOrdersForSave(limit = 8, includeTimeline = true) {
+    const out = {};
+    const entries = Object.entries(state.orders || {})
+      .sort(([, a], [, b]) => (Number(b?.createdAt || 0) - Number(a?.createdAt || 0)))
+      .slice(0, limit);
+
+    entries.forEach(([orderId, order]) => {
+      if (!order || typeof order !== "object") return;
+      out[orderId] = {
+        orderId: String(order?.orderId || order?.id || orderId),
+        trackingId: String(order?.trackingId || ""),
+        carrier: String(order?.carrier || "MegaShip"),
+        status: String(order?.status || "Processing"),
+        createdAt: finiteOrNull(order?.createdAt) || Date.now(),
+        shippedAt: finiteOrNull(order?.shippedAt),
+        outForDeliveryAt: finiteOrNull(order?.outForDeliveryAt),
+        etaAt: finiteOrNull(order?.etaAt ?? order?.estimatedDeliveryAt ?? order?.deliveredAt),
+        estimatedDeliveryAt: finiteOrNull(order?.estimatedDeliveryAt ?? order?.etaAt ?? order?.deliveredAt),
+        deliveredAt: finiteOrNull(order?.deliveredAt),
+        lastStatusUpdateAt: finiteOrNull(order?.lastStatusUpdateAt) || Date.now(),
+        subtotal: Math.max(0, Number(order?.subtotal || 0)),
+        shippingFee: Math.max(0, Number(order?.shippingFee || 0)),
+        total: Math.max(0, Number(order?.total || 0)),
+        items: exportOrderItems(order),
+        deliveredClaimedToInventory: Boolean(order?.deliveredClaimedToInventory)
+      };
+      if (includeTimeline) {
+        out[orderId].timeline = exportOrderTimeline(order);
+      }
+    });
+
+    return out;
+  }
+
+  function exportBoostMeta(meta) {
+    if (!meta || typeof meta !== "object") return {};
+    const out = {};
+    Object.entries(meta).slice(0, 8).forEach(([key, value]) => {
+      if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        out[key] = value;
+        return;
+      }
+      if (Array.isArray(value)) {
+        out[key] = value.slice(0, 6).map((entry) => {
+          if (entry === null || ["string", "number", "boolean"].includes(typeof entry)) return entry;
+          return null;
+        });
+        return;
+      }
+      if (typeof value === "object") {
+        const nested = {};
+        Object.entries(value).slice(0, 6).forEach(([nestedKey, nestedValue]) => {
+          if (nestedValue === null || ["string", "number", "boolean"].includes(typeof nestedValue)) {
+            nested[nestedKey] = nestedValue;
+          }
+        });
+        out[key] = nested;
+      }
+    });
+    return out;
+  }
+
+  function exportActiveBoostsForSave(limit = 12) {
+    const out = {};
+    Object.entries(state.activeBoosts || {})
+      .slice(0, limit)
+      .forEach(([boostId, boost]) => {
+        if (!boost || typeof boost !== "object") return;
+        out[boostId] = {
+          id: String(boost?.id || boostId),
+          itemId: String(boost?.itemId || boost?.id || boostId),
+          name: String(boost?.name || boost?.itemId || boostId),
+          type: String(boost?.type || "custom"),
+          value: Number.isFinite(Number(boost?.value)) ? Number(boost.value) : 0,
+          startedAt: finiteOrNull(boost?.startedAt) || Date.now(),
+          endsAt: finiteOrNull(boost?.endsAt) || (Date.now() + POWER_DURATION_MS),
+          stacks: Math.max(1, Math.floor(Number(boost?.stacks || 1))),
+          meta: exportBoostMeta(boost?.meta)
+        };
+        if (boost?.remainingUses !== undefined) {
+          out[boostId].remainingUses = Math.max(0, Math.floor(Number(boost.remainingUses || 0)));
+        }
+      });
+    return out;
+  }
+
+  function exportOwnedBusinessesForSave(limit = 100) {
+    const out = {};
+    Object.entries(state.ownedBusinesses || {})
+      .slice(0, limit)
+      .forEach(([bizId, value]) => {
+        out[bizId] = {
+          level: Math.max(0, Math.floor(Number(value?.level || 0))),
+          lastPaidAt: finiteOrNull(value?.lastPaidAt) || Date.now(),
+          hasManager: Boolean(value?.hasManager),
+          needsRestart: Boolean(value?.needsRestart)
+        };
+      });
+    return out;
+  }
+
+  function buildCloudSaveState() {
+    const now = Date.now();
+    const nextState = {
+      schemaVersion: SCHEMA_VERSION,
+      bankBalance: Number(state.bankBalance || 0),
+      bankLevel: Math.max(1, Math.floor(Number(state.bankLevel || 1))),
+      bankXP: Math.max(0, Number(state.bankXP || 0)),
+      reputation: Number(state.reputation || 0),
+      txLog: exportTxLogForSave(12),
+
+      activeJobs: exportActiveJobsForSave(6),
+      jobCooldownUntil: finiteOrNull(state.jobCooldownUntil),
+      parallelJobUpgradeLevel: Math.max(0, Math.floor(Number(state.parallelJobUpgradeLevel || 0))),
+
+      quickTaskActiveId: state.quickTaskActiveId ? String(state.quickTaskActiveId) : null,
+      quickTaskAcceptedAt: finiteOrNull(state.quickTaskAcceptedAt),
+      quickTaskFinishAt: finiteOrNull(state.quickTaskFinishAt),
+      quickTasksUsedInWindow: Math.max(0, Math.floor(Number(state.quickTasksUsedInWindow || 0))),
+      quickTaskWindowResetAt: finiteOrNull(state.quickTaskWindowResetAt) || (now + QUICK_WINDOW_MS),
+
+      mainStreak: Math.max(0, Math.floor(Number(state.mainStreak || 0))),
+      streakWindowUntil: finiteOrNull(state.streakWindowUntil),
+      lastMainJobClaimAt: finiteOrNull(state.lastMainJobClaimAt),
+
+      activeOpportunity: state.activeOpportunity && typeof state.activeOpportunity === "object"
+        ? {
+            id: String(state.activeOpportunity.id || ""),
+            title: String(state.activeOpportunity.title || "Flash Contract"),
+            durationMin: Math.max(0, Number(state.activeOpportunity.durationMin || 0)),
+            basePay: Math.max(0, Number(state.activeOpportunity.basePay || 0)),
+            offerExpiresAt: finiteOrNull(state.activeOpportunity.offerExpiresAt) || now
+          }
+        : null,
+      nextOpportunityCheckAt: finiteOrNull(state.nextOpportunityCheckAt),
+
+      inventory: exportInventoryForSave(250),
+      orders: exportOrdersForSave(8, true),
+      activeBoosts: exportActiveBoostsForSave(12),
+
+      skillPoints: Math.max(0, Math.floor(Number(state.skillPoints || 0))),
+      trainingsBought: Math.max(0, Math.floor(Number(state.trainingsBought || 0))),
+      skills: {
+        efficiency: Math.max(0, Math.floor(Number(state.skills?.efficiency || 0))),
+        speed: Math.max(0, Math.floor(Number(state.skills?.speed || 0))),
+        luck: Math.max(0, Math.floor(Number(state.skills?.luck || 0))),
+        charisma: Math.max(0, Math.floor(Number(state.skills?.charisma || 0)))
+      },
+      totalEarned: Math.max(0, Number(state.totalEarned || 0)),
+      upgrades: shallowClone(state.upgrades) || {},
+
+      ownedBusinesses: exportOwnedBusinessesForSave(100),
+      casinoStats: {
+        wins: Math.max(0, Math.floor(Number(state.casinoStats?.wins || 0))),
+        losses: Math.max(0, Math.floor(Number(state.casinoStats?.losses || 0)))
+      },
+
+      lastDailyBonusAt: finiteOrNull(state.lastDailyBonusAt),
+      lastInterestAt: finiteOrNull(state.lastInterestAt),
+
+      passiveCapWindowStart: finiteOrNull(state.passiveCapWindowStart) || now,
+      passiveEarnedInWindow: Math.max(0, Number(state.passiveEarnedInWindow || 0)),
+      powerPurchaseWindow: (Array.isArray(state.powerPurchaseWindow) ? state.powerPurchaseWindow : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+        .slice(-12)
+    };
+
+    if (estimatePayloadSize(nextState) > 250000) {
+      nextState.txLog = exportTxLogForSave(8);
+      nextState.orders = exportOrdersForSave(4, true);
+    }
+    if (estimatePayloadSize(nextState) > 400000) {
+      nextState.orders = exportOrdersForSave(3, false);
+    }
+    if (estimatePayloadSize(nextState) > 550000) {
+      nextState.txLog = exportTxLogForSave(5);
+      nextState.orders = exportOrdersForSave(1, false);
+    }
+
+    return nextState;
+  }
+
   function exportGameStateForSave() {
-    return JSON.parse(JSON.stringify(state));
+    return buildCloudSaveState();
   }
 
   function saveLocalState() {
@@ -769,7 +1266,9 @@
   function withTimeout(promise, ms, message) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(message));
+        const err = new Error(message);
+        err.code = message;
+        reject(err);
       }, ms);
       Promise.resolve(promise)
         .then((value) => {
@@ -814,10 +1313,78 @@
     await handleAuthState({ uid: `local_${key}`, email: `${key}@local.test` });
   }
 
-  function saveState() {
+  function preparePendingSavePayload(reason = "autosave") {
+    cloudDirty = true;
+    pendingSaveReason = reason;
+    pendingCloudSnapshot = exportGameStateForSave();
     saveLocalState();
-    scheduleAutosave();
-    scheduleServerMirrorSave();
+    persistPendingCloudState(pendingCloudSnapshot);
+    return pendingCloudSnapshot;
+  }
+
+  function requestSaveInternal(reason = "state-change") {
+    saveLocalState();
+    if (localAuthMode) {
+      setSaveStatus("saved", "local");
+      return;
+    }
+    if (cloudHydrationInFlight) {
+      logSaveEvent("skip-during-hydration", { reason });
+      return;
+    }
+    preparePendingSavePayload(reason);
+    scheduleAutosave(reason);
+  }
+
+  function queueBackgroundSave(reason = "background") {
+    saveLocalState();
+    if (localAuthMode) {
+      setSaveStatus("saved", "local");
+      return;
+    }
+    if (cloudHydrationInFlight) {
+      return;
+    }
+    preparePendingSavePayload(reason);
+    logSaveEvent("background-dirty", {
+      reason,
+      payloadSize: estimatePayloadSize(pendingCloudSnapshot)
+    });
+  }
+
+  const saveManager = {
+    requestSave(reason = "state-change") {
+      const now = Date.now();
+      console.count("SAVE_CALLED");
+      backoffAttemptCount = 0;
+      if (!saveTraceLogged) {
+        saveTraceLogged = true;
+        console.trace("SAVE_TRACE");
+      }
+      saveRequestTimestamps.push(now);
+      while (saveRequestTimestamps.length && (now - saveRequestTimestamps[0]) > 10_000) {
+        saveRequestTimestamps.shift();
+      }
+      logSaveEvent("request", {
+        reason,
+        callsLast10s: saveRequestTimestamps.length
+      });
+      requestSaveInternal(reason);
+    },
+    async flushNow(reason = "manual-click") {
+      if (localAuthMode) {
+        saveLocalState();
+        setSaveStatus("saved", "local");
+        return;
+      }
+      backoffAttemptCount = 0;
+      preparePendingSavePayload(reason);
+      await flushCloudSave(true, reason);
+    }
+  };
+
+  function saveState(reason = "state-change") {
+    saveManager.requestSave(reason);
   }
 
   async function loadUserGameState(uid) {
@@ -904,94 +1471,246 @@
     }, { merge: true });
   }
 
-  async function flushCloudSave() {
+  async function flushCloudSave(force = false, reason = "autosave") {
     if (localAuthMode) {
       saveLocalState();
       setSaveStatus("saved", "local");
       return;
     }
 
-    if (firebaseReady && currentUid && auth?.currentUser) {
-      setSaveStatus("saving");
+    if (cloudHydrationInFlight) {
+      logSaveEvent("defer-during-hydration", { reason, force });
+      return;
+    }
+
+    if (saveInFlight) {
+      logSaveEvent("save-already-in-flight", { reason, force, dirty: cloudDirty });
+      return;
+    }
+
+    const now = Date.now();
+    if (nextCloudSaveAllowedAt && now < nextCloudSaveAllowedAt) {
+      if (cloudDirty) scheduleAutosave(reason);
+      setSaveStatus("offline", "backoff");
+      return;
+    }
+
+    if (!navigator.onLine) {
+      setSaveStatus("offline", "offline");
+      logSaveEvent("skip-offline", { reason, force, dirty: cloudDirty });
+      return;
+    }
+
+    if (!cloudDirty && !force) {
+      return;
+    }
+
+    const payload = pendingCloudSnapshot || exportGameStateForSave();
+    const payloadSize = estimatePayloadSize(payload);
+    const sinceLastAttempt = lastSaveAttemptAt ? now - lastSaveAttemptAt : null;
+    lastSaveAttemptAt = now;
+    saveInFlight = true;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveScheduledAt = 0;
+    setSaveStatus("saving", reason);
+    logSaveEvent("attempt", {
+      reason,
+      force,
+      payloadSize,
+      sinceLastAttempt
+    });
+
+    if (hasServerSession() && !(firebaseReady && currentUid && auth?.currentUser)) {
       try {
         await withTimeout(
-          restSaveUserDocument(currentUid, exportGameStateForSave()),
+          postJson("/api/progress/save", {
+            username: serverSession.username,
+            password: serverSession.password,
+            progress: payload
+          }),
+          5000,
+          "server-save-timeout"
+        );
+        serverReachable = true;
+        finalizeSuccessfulSave(payload);
+        setSaveStatus("saved", "server");
+        logSaveEvent("success", { reason, target: "server" });
+        return;
+      } catch (err) {
+        cloudDirty = true;
+        serverReachable = false;
+        const detail = err?.code || err?.message || "server-save-failed";
+        if (isRateLimitError(err)) {
+          registerRateLimit(reason, detail);
+          return;
+        }
+        setSaveStatus(
+          navigator.onLine ? "error" : "offline",
+          detail
+        );
+        logSaveEvent("error", { reason, detail, status: err?.status || null });
+        return;
+      } finally {
+        saveInFlight = false;
+        if (cloudDirty) scheduleAutosave(reason);
+      }
+    }
+
+    if (firebaseReady && currentUid && auth?.currentUser) {
+      try {
+        await withTimeout(
+          restSaveUserDocument(currentUid, payload),
           5000,
           "rest-save-timeout"
         );
-        cloudDirty = false;
-        saveLocalState();
+        finalizeSuccessfulSave(payload);
         setSaveStatus("saved", "cloud");
+        logSaveEvent("success", { reason, target: "rest" });
+        saveInFlight = false;
+        if (cloudDirty) scheduleAutosave("post-flight-dirty");
         return;
       } catch (err) {
-        // Fall through to SDK save if the REST path fails.
+        // On hosted deployments, the same-origin proxy already attempted the save path
+        // and direct REST fallback. Do not drop into the SDK timeout path.
+        if (isHostedContext()) {
+          cloudDirty = true;
+          const detail = err?.code || err?.message || "cloud-save-failed";
+          if (isRateLimitError(err)) {
+            registerRateLimit(reason, detail);
+            saveInFlight = false;
+            if (cloudDirty && nextCloudSaveAllowedAt) scheduleAutosave(reason);
+            return;
+          }
+          setSaveStatus(
+            navigator.onLine ? "error" : "offline",
+            detail
+          );
+          logSaveEvent("error", { reason, detail, status: err?.status || null });
+          saveInFlight = false;
+          return;
+        }
+        // Fall through to SDK save only in local/test contexts.
         if (!firebaseReady) {
           cloudDirty = true;
           setSaveStatus("error", err?.code || err?.message || "rest-save-failed");
+          logSaveEvent("error", {
+            reason,
+            detail: err?.code || err?.message || "rest-save-failed",
+            status: err?.status || null
+          });
+          saveInFlight = false;
           return;
         }
       }
     }
 
-    if (!firebaseReady || !currentUid || !cloudDirty || saveInFlight) return;
-    saveInFlight = true;
-    cloudDirty = false;
-    setSaveStatus("saving");
+    if (!firebaseReady || !currentUid) {
+      saveInFlight = false;
+      return;
+    }
+
     try {
       await withTimeout(
-        saveUserGameState(currentUid, exportGameStateForSave()),
+        saveUserGameState(currentUid, payload),
         CLOUD_SAVE_TIMEOUT_MS,
         "cloud-save-timeout"
       );
-      setSaveStatus("saved");
+      finalizeSuccessfulSave(payload);
+      setSaveStatus("saved", "cloud");
+      logSaveEvent("success", { reason, target: "sdk" });
     } catch (err) {
       cloudDirty = true;
+      const detail = err?.code || err?.message || "unknown";
+      if (isRateLimitError(err)) {
+        registerRateLimit(reason, detail);
+        return;
+      }
       setSaveStatus(
         navigator.onLine ? "error" : "offline",
-        err?.code || err?.message || "unknown"
+        detail
       );
+      logSaveEvent("error", { reason, detail, status: err?.status || null });
     } finally {
       saveInFlight = false;
-      if (cloudDirty) scheduleAutosave();
+      if (cloudDirty) scheduleAutosave(reason);
     }
   }
 
-  function scheduleAutosave() {
+  function scheduleAutosave(reason = "autosave") {
     if (localAuthMode) {
       saveLocalState();
       setSaveStatus("saved", "local");
       return;
     }
-    if (!firebaseReady || !currentUid) {
-      if (localAuthMode) setSaveStatus("saved", "local");
+    if (cloudHydrationInFlight) {
       return;
     }
-    cloudDirty = true;
+    if ((!firebaseReady || !currentUid) && !hasServerSession()) {
+      return;
+    }
+    if (backoffAttemptCount > MAX_AUTOMATIC_RATE_RETRIES) {
+      setSaveStatus("error", "rate-limited; waiting for next change");
+      return;
+    }
+    if (!navigator.onLine) {
+      setSaveStatus("offline", "offline");
+      return;
+    }
+    if (!cloudDirty) {
+      preparePendingSavePayload(reason);
+    }
+    if (saveInFlight) {
+      return;
+    }
+    const timing = getAutosaveTimings(reason);
+    const now = Date.now();
+    const nextAt = Math.max(
+      now + timing.debounceMs,
+      lastCloudSaveAt ? lastCloudSaveAt + timing.minIntervalMs : 0,
+      nextCloudSaveAllowedAt || 0
+    );
+    if (saveTimer && saveScheduledAt && saveScheduledAt <= nextAt) {
+      logSaveEvent("coalesced", { reason, scheduledInMs: saveScheduledAt - now });
+      return;
+    }
     clearTimeout(saveTimer);
+    saveScheduledAt = nextAt;
+    logSaveEvent("scheduled", { reason, scheduledInMs: nextAt - now });
     saveTimer = setTimeout(() => {
-      flushCloudSave();
-    }, 500);
+      saveTimer = null;
+      saveScheduledAt = 0;
+      flushCloudSave(false, pendingSaveReason || reason);
+    }, Math.max(0, nextAt - now));
   }
 
-  async function flushServerMirrorSave() {
+  async function flushServerMirrorSave(reason = "server-mirror") {
     if (!hasServerSession()) return;
     try {
+      const payload = pendingCloudSnapshot || exportGameStateForSave();
+      logSaveEvent("mirror-attempt", {
+        reason,
+        payloadSize: estimatePayloadSize(payload),
+        sinceLastAttempt: lastSaveAttemptAt ? Date.now() - lastSaveAttemptAt : null
+      });
       await postJson("/api/progress/save", {
         username: serverSession.username,
         password: serverSession.password,
-        progress: exportGameStateForSave()
+        progress: payload
       });
       serverReachable = true;
+      logSaveEvent("mirror-success", { reason });
     } catch {
       serverReachable = false;
+      logSaveEvent("mirror-error", { reason });
     }
   }
 
-  function scheduleServerMirrorSave() {
+  function scheduleServerMirrorSave(reason = "server-mirror") {
     if (!hasServerSession()) return;
     clearTimeout(serverMirrorSaveTimer);
     serverMirrorSaveTimer = setTimeout(() => {
-      flushServerMirrorSave();
+      flushServerMirrorSave(reason);
     }, 700);
   }
 
@@ -1001,11 +1720,8 @@
       saveLocalState();
       return;
     }
-    if (firebaseReady && currentUid && cloudDirty && !saveInFlight) {
-      flushCloudSave();
-    }
-    if (hasServerSession()) {
-      flushServerMirrorSave();
+    if (cloudDirty && !saveInFlight && (hasServerSession() || (firebaseReady && currentUid))) {
+      flushCloudSave(true, "flush-pending");
     }
   }
 
@@ -1248,15 +1964,29 @@
       clearSocialListeners();
       resetSocialState();
       currentUid = null;
+      cloudHydrationInFlight = false;
+      cloudDirty = false;
+      pendingCloudSnapshot = null;
+      pendingSaveReason = "";
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      saveScheduledAt = 0;
       showAuthScreen();
       dom.whoami.textContent = "";
       return;
     }
     currentUid = user.uid;
+    cloudDirty = false;
+    pendingCloudSnapshot = null;
+    pendingSaveReason = "";
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveScheduledAt = 0;
     if (localAuthMode) {
       replaceState(loadLocalState());
       balanceDisplay = state.bankBalance;
     } else {
+      cloudHydrationInFlight = true;
       replaceState(loadLocalState());
       balanceDisplay = state.bankBalance;
       setSaveStatus("offline", "loading-cloud");
@@ -1282,6 +2012,9 @@
       loadUserGameState(user.uid).catch((err) => {
         console.warn("Cloud state load skipped:", err?.code || err?.message || err);
         setSaveStatus(navigator.onLine ? "offline" : "offline", err?.code || err?.message || "cloud-load-failed");
+      }).finally(() => {
+        cloudHydrationInFlight = false;
+        if (cloudDirty) scheduleAutosave("post-hydration");
       });
     }
 
@@ -1293,7 +2026,7 @@
       }
     }
 
-    if (hasServerSession()) {
+    if (hasServerSession() && !(firebaseReady && currentUid && auth?.currentUser)) {
       try {
         await flushServerMirrorSave();
       } catch (err) {
@@ -2805,17 +3538,19 @@
         password: serverSession.password
       });
       serverOrders = Array.isArray(data.orders) ? data.orders : [];
-      const progressResp = await postJson("/api/progress/load", {
-        username: serverSession.username,
-        password: serverSession.password
-      });
-      if (progressResp?.progress && typeof progressResp.progress === "object") {
-        const progress = progressResp.progress;
-        if (typeof progress.bankBalance === "number") state.bankBalance = progress.bankBalance;
-        if (progress.inventory && typeof progress.inventory === "object") state.inventory = progress.inventory;
-        if (typeof progress.totalEarned === "number") state.totalEarned = progress.totalEarned;
-        if (progress.upgrades && typeof progress.upgrades === "object") state.upgrades = progress.upgrades;
-        if (progress.ownedBusinesses && typeof progress.ownedBusinesses === "object") state.ownedBusinesses = progress.ownedBusinesses;
+      if (!(firebaseReady && currentUid && auth?.currentUser)) {
+        const progressResp = await postJson("/api/progress/load", {
+          username: serverSession.username,
+          password: serverSession.password
+        });
+        if (progressResp?.progress && typeof progressResp.progress === "object") {
+          const progress = progressResp.progress;
+          if (typeof progress.bankBalance === "number") state.bankBalance = progress.bankBalance;
+          if (progress.inventory && typeof progress.inventory === "object") state.inventory = progress.inventory;
+          if (typeof progress.totalEarned === "number") state.totalEarned = progress.totalEarned;
+          if (progress.upgrades && typeof progress.upgrades === "object") state.upgrades = progress.upgrades;
+          if (progress.ownedBusinesses && typeof progress.ownedBusinesses === "object") state.ownedBusinesses = progress.ownedBusinesses;
+        }
       }
       serverReachable = true;
     } catch {
@@ -3762,6 +4497,11 @@
   }
 
   function tick1s() {
+    renderSaveStatus();
+    if (cloudHydrationInFlight) {
+      render();
+      return;
+    }
     const now = Date.now();
     let shouldSave = false;
     if (state.streakWindowUntil && now > state.streakWindowUntil) {
@@ -3776,12 +4516,17 @@
       shouldSave = true;
     }
     if (shouldSave) {
-      saveState();
+      queueBackgroundSave("tick1s");
     }
     render();
   }
 
   function tick30s() {
+    if (cloudHydrationInFlight) {
+      renderSaveStatus();
+      render();
+      return;
+    }
     let shouldSave = false;
     if (opportunityCheck()) {
       shouldSave = true;
@@ -3798,7 +4543,7 @@
       }
     }
     if (shouldSave) {
-      saveState();
+      queueBackgroundSave("tick30s");
     }
     render();
   }
@@ -3870,8 +4615,7 @@
     dom.trackingSearchBtn.onclick = trackOrderByTrackingId;
 
     dom.saveNowBtn.onclick = async () => {
-      saveState();
-      if (!localAuthMode) await flushCloudSave();
+      await saveManager.flushNow("manual-click");
       toast("Save requested.");
     };
 
@@ -3943,11 +4687,17 @@
     if (!firebaseReady) return;
 
     firebaseApi.onAuthStateChanged(auth, handleAuthState);
-    window.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") flushCloudSave();
+    window.addEventListener("online", () => {
+      if (cloudDirty) {
+        nextCloudSaveAllowedAt = 0;
+        setSaveStatus("offline", "reconnected");
+        scheduleAutosave("back-online");
+      } else {
+        setSaveStatus("saved", "online");
+      }
     });
-    window.addEventListener("beforeunload", () => {
-      flushCloudSave();
+    window.addEventListener("offline", () => {
+      setSaveStatus("offline", "offline");
     });
   }
 
