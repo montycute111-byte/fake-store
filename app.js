@@ -1470,62 +1470,42 @@
         detail
       );
       logSaveEvent("error", { reason, detail, status: err?.status || null });
-    } finally {
-      saveInFlight = false;
-      if (cloudDirty && !rateLimited) scheduleAutosave(reason);
-    }
+  } finally {
+    saveInFlight = false;
   }
+}
 
-  function scheduleAutosave(reason = "autosave") {
-    if (localAuthMode) {
-      saveLocalState();
-      setSaveStatus("saved", "local");
-      return;
-    }
-    if (cloudHydrationInFlight) {
-      return;
-    }
-    if (!firebaseReady || !currentUid || !auth?.currentUser) {
-      return;
-    }
-    if (backoffAttemptCount > MAX_AUTOMATIC_RATE_RETRIES) {
-      setSaveStatus("error", "rate-limited; waiting for next change");
-      return;
-    }
-    if (!navigator.onLine) {
-      setSaveStatus("offline", "offline");
-      return;
-    }
-    if (!cloudDirty) {
-      preparePendingSavePayload(reason);
-    }
-    if (saveInFlight) {
-      return;
-    }
-    const now = Date.now();
-    if (nextCloudSaveAllowedAt && now < nextCloudSaveAllowedAt) {
-      setSaveStatus("offline", "backoff");
-      return;
-    }
-    const timing = getAutosaveTimings(reason);
-    const nextAt = Math.max(
-      now + timing.debounceMs,
-      lastCloudSaveAt ? lastCloudSaveAt + timing.minIntervalMs : 0,
-      nextCloudSaveAllowedAt || 0
-    );
-    if (saveTimer && saveScheduledAt && saveScheduledAt <= nextAt) {
-      logSaveEvent("coalesced", { reason, scheduledInMs: saveScheduledAt - now });
-      return;
-    }
-    clearTimeout(saveTimer);
-    saveScheduledAt = nextAt;
-    logSaveEvent("scheduled", { reason, scheduledInMs: nextAt - now });
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      saveScheduledAt = 0;
-      flushCloudSave(false, pendingSaveReason || reason);
-    }, Math.max(0, nextAt - now));
+function scheduleAutosave(reason = "autosave") {
+  if (localAuthMode) {
+    saveLocalState();
+    setSaveStatus("saved", "local");
+    return;
   }
+  if (!cloudDirty) {
+    preparePendingSavePayload(reason);
+  }
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveScheduledAt = 0;
+  if (cloudHydrationInFlight) {
+    setSaveStatus("offline", "manual-save-required");
+    return;
+  }
+  if (!firebaseReady || !currentUid || !auth?.currentUser) {
+    setSaveStatus("offline", "manual-save-required");
+    return;
+  }
+  if (!navigator.onLine) {
+    setSaveStatus("offline", "offline");
+    return;
+  }
+  if (nextCloudSaveAllowedAt && Date.now() < nextCloudSaveAllowedAt) {
+    setSaveStatus("offline", "backoff");
+    return;
+  }
+  setSaveStatus("offline", "manual-save-required");
+  logSaveEvent("autosave-disabled", { reason });
+}
 
   async function flushServerMirrorSave(reason = "server-mirror") {
     return;
@@ -1536,15 +1516,15 @@
   }
 
 
-  function flushPendingSavesNow() {
-    if (localAuthMode) {
-      saveLocalState();
-      return;
-    }
-    if (cloudDirty && !saveInFlight && firebaseReady && currentUid && auth?.currentUser) {
-      flushCloudSave(true, "flush-pending");
-    }
+function flushPendingSavesNow() {
+  if (localAuthMode) {
+    saveLocalState();
+    return;
   }
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveScheduledAt = 0;
+}
 
   function showAuthScreen() {
     dom.authScreen.classList.remove("hidden");
@@ -4146,11 +4126,23 @@
   async function init() {
     showAuthScreen();
     bindAuthEvents();
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") flushPendingSavesNow();
-    });
-    window.addEventListener("pagehide", flushPendingSavesNow);
-    window.addEventListener("beforeunload", flushPendingSavesNow);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      saveScheduledAt = 0;
+    }
+  });
+  window.addEventListener("pagehide", () => {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveScheduledAt = 0;
+  });
+  window.addEventListener("beforeunload", () => {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveScheduledAt = 0;
+  });
     setSaveStatus("saved", "local");
     const rememberedUsername = localStorage.getItem("server_shop_username") || "";
     const rememberedPassword = sessionStorage.getItem("server_shop_password") || "";
@@ -4180,15 +4172,15 @@
     if (!firebaseReady) return;
 
     firebaseApi.onAuthStateChanged(auth, handleAuthState);
-    window.addEventListener("online", () => {
-      if (cloudDirty) {
-        nextCloudSaveAllowedAt = 0;
-        setSaveStatus("offline", "reconnected");
-        scheduleAutosave("back-online");
-      } else {
-        setSaveStatus("saved", "online");
-      }
-    });
+  window.addEventListener("online", () => {
+    backoffAttemptCount = 0;
+    nextCloudSaveAllowedAt = 0;
+    if (cloudDirty) {
+      setSaveStatus("offline", "manual-save-required");
+    } else {
+      setSaveStatus("saved", "online");
+    }
+  });
     window.addEventListener("offline", () => {
       setSaveStatus("offline", "offline");
     });
